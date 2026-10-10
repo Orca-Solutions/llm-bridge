@@ -1,41 +1,31 @@
 # Phase 1 build plan (draft)
 
-Status: draft, 2026-10-09. Not a green light: nothing here starts until jason says so. All eight plan decisions are settled; the inputs table lists them.
+Status: draft, updated 2026-10-10 with the pre-build review's fixes, which jason approved. Phase 1 starts with task 1 on jason's green light. There is no plugin trial first (D11).
 
-Each task below has a **Done when** list. A task is done only when every item on it passes and is in the audit log where relevant. Most items are the security review's Phase 1 gate tests or the protocol spec's conformance tests (P1 to P23 and R1 to R9 in [protocol-spec.md](protocol-spec.md#13-conformance-tests)), so the gate gets checked step by step rather than all at the end.
+Each task below has a **Done when** list. A task is done only when every item on it passes and is in the audit log where relevant. Most items are the security review's Phase 1 gate tests or the protocol spec's conformance tests (P1 to P24 and R1 to R9 in [protocol-spec.md](protocol-spec.md#13-conformance-tests)), so the gate gets checked step by step rather than all at the end.
 
 ## Inputs
 
 | Input | Value used here | Source |
 |---|---|---|
-| Trial first (decision 2) | Phase 0 runs before any Phase 1 task | jason, 2026-10-09 |
 | Claude liaison (decision 3) | Claude Code session fed by a custom channel, Manual or acceptEdits mode, no permission relay; Agent SDK only as fallback | jason, 2026-10-09 |
 | Billing (decision 4) | jason's own Claude and ChatGPT plans; API-key mode built in | jason, 2026-10-09 |
 | Autonomy limits (decision 5) | 8 hops, 20 turns, a daily spend cap jason sets, edits only inside each side's clone | jason, 2026-10-09 |
 | Where it runs (decision 6) | jason's dev machine | jason, 2026-10-09 |
 | Language (decision 7) | TypeScript on Node, SQLite | jason, 2026-10-09 |
+| Dev machine OS | macOS or Linux, not yet recorded; some sandbox settings differ (D14) | Provisional |
+| Claude workers (routing) | `claude -p` without `--bare`, on jason's plan login (D12) | jason, 2026-10-10 |
+| Spend cap metric | Estimated USD from token counts at list price, per side per day (D13) | Pre-build review |
 | Projects (decision 8) | One liaison per side, each routing on its own side from a registered project list. Routing switches on right after the Phase 1 gate, behind its own gate, with the security re-check's six additions | jason, 2026-10-09 |
-| Trust rules | All must-fix items are Phase 1 requirements | [security-review.md](research/security-review.md), plan's Trust model |
+| Trust rules | All must-fix items are Phase 1 requirements | [security-review.md](security-review.md), plan's Trust model |
 
 Phase 1 runs with one registered project per side and routing off, so the single-project gate is tested on its own first. The routing milestone after task 12 turns routing on.
-
-## Phase 0: trial the official plugin
-
-Decision 2 says use `codex-plugin-cc` first and build only if jason misses Codex starting work on Claude.
-
-| # | Task | Done when |
-|---|---|---|
-| 0.1 | Security-review `codex-plugin-cc` at a pinned commit (est. 3 to 6 h): the hooks it installs, the sandbox and approval settings it starts Codex with, what `/codex:transfer` reads from the transcript | Written review in `docs/reviews/`; any must-fix items listed; jason accepts it |
-| 0.2 | Install the reviewed version, pinned, auto-update off | Version recorded in the decision log |
-| 0.3 | Use it for about two weeks | jason answers one question: did you miss Codex starting work on Claude? |
-
-If the answer to 0.3 is no, Phase 1 doesn't start, and these docs stay as the design record. If yes, Phase 1 starts with task 1.
 
 ## Phase 1 tasks, in order
 
 Phase 1 delivers in two milestones, then routing follows as a third. **Milestone A** (tasks 1 to 10): the hub, the console and the Claude liaison, reachable from jason's own Codex CLI through the MCP endpoint, so Codex can already ask Claude for reviews. **Milestone B** (tasks 11 and 12): the long-lived Codex liaison and the full gate run.
 
-Estimates come from the plan: 15 to 25 h for Phases 1 and 2, plus 5 to 10 h for trust controls and 4 to 8 h for the security review's must-fix items. Sizes below (S, M, L) are relative, not hours.
+Pre-build review estimate: 40 to 70 h for tasks 1 to 12, and 15 to 25 h for tasks 13 to 15. Sizes below (S, M, L) are relative, not hours.
 
 ### 1. Repository and supply chain (S)
 
@@ -47,6 +37,8 @@ Done when:
 - No dependency has an install script that CI runs.
 - CI holds no deploy or publish secrets at all until a release process exists.
 - Dependabot or Renovate PRs are reviewed like any other diff; auto-merge is off.
+- Versions are pinned as in spec section 15: Claude Code 2.1.286 or later, `@modelcontextprotocol/sdk` at a 1.x release that doesn't negotiate MCP 2026-07-28, and exact Codex CLI and `@openai/codex-sdk` versions. The hub checks `claude --version` and `codex --version` at start and refuses to launch below the minimum.
+- Founding docs move into the repo as `founding/*.md` → `docs/`, `bridge-design/security-review.md` → `docs/security-review.md`, and `founding/starter/*` → the repo root, so README's links resolve.
 
 ### 2. Envelope and message store (M)
 
@@ -95,6 +87,7 @@ Done when:
 - Only the human principal can unpark, and only with the explicit action.
 - **P18**: a human message to a parked thread is stored and the thread stays parked.
 - A human message resets hops only; turn, rate and spend counters never reset.
+- The hub runs an OTLP receiver, and the liaison's hub-owned settings set `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER=otlp` and the receiver's endpoint. The spend counter is estimated USD from `claude_code.token.usage` on the Claude side and Codex SDK `turn.completed` usage on the Codex side (D13). On trip the hub parks that side's threads and stops feeding its channel.
 
 ### 6. Bridge MCP endpoint (S)
 
@@ -134,7 +127,7 @@ Done when:
 
 ### 9. Process supervisor and kill switch (S)
 
-The hub starts each liaison and its channel process in its own process group.
+The Claude liaison is an interactive session: the dev-channel flag works only interactively and asks for confirmation at each start, and Claude Code spawns the channel server itself. So the hub generates the liaison's command line, settings and config folder, and jason starts it in a terminal, or attaches to a pty the hub owns (tmux or similar), and answers the confirmation. The hub starts the Codex adapter itself. The kill switch targets the process group of each session the hub started or was told about.
 
 Done when:
 - Gate: an agent leaves a `nohup sleep` running; Stop kills it within seconds (SIGTERM, then SIGKILL to the group).
@@ -143,29 +136,32 @@ Done when:
 
 ### 10. Claude liaison and channel adapter (L)
 
-Launcher with hub-owned settings, plus the channel plugin. Fallback to `check_inbox` when the channel won't load.
+Launcher with hub-owned settings, plus the channel plugin. The channel server is registered user-scope in the hub-owned `CLAUDE_CONFIG_DIR` (its `.claude.json`); Claude Code spawns it, and it connects to the hub socket with its token file. If the channel won't load, the fallback is the Agent SDK (decision 3); `check_inbox` serves outside clients and `-p` workers, not an interactive liaison.
 
 Launcher settings (from the security review's must-fix item 1 and the plan's rule 2):
-- Permission mode `default` or `acceptEdits`, never `auto`; never `--dangerously-skip-permissions`.
+- `--permission-mode default` (or `acceptEdits`) on the command line and `permissions.defaultMode` in the hub-owned settings, because auto is the interactive default since Claude Code 2.1.283. Never `auto`, never `--dangerously-skip-permissions`.
+- `projects["<clone>"].hasTrustDialogAccepted` pre-set in the hub-owned `.claude.json`, so the trust dialog doesn't appear. Never set in jason's own `~/.claude.json`. Safe only because the clone is sparse (P21).
+- `MCP_PROTOCOL_NEGOTIATION=legacy` in the liaison's environment, as a second guard for the channel handshake.
 - Own `CLAUDE_CONFIG_DIR` and `--settings` file owned by the hub.
 - Bash sandbox on, `allowUnsandboxedCommands: false`, network allowlist strict, credential paths denied.
 - The hub's state directory, its token files and `~/.codex` in `sandbox.filesystem.denyRead`, credential denies and `Read()` deny rules.
-- `sandbox.network.allowUnixSockets` lists only the hub's session socket, so sandboxed Bash can't reach jason's other sessions' inbox sockets.
+- Unix sockets from sandboxed Bash: on macOS, `sandbox.network.allowUnixSockets` lists only the hub's session socket; on Linux that setting is ignored, so Unix sockets stay blocked (the default) and the channel process, which runs outside the sandbox, carries all hub traffic. Either way sandboxed Bash can't reach jason's other sessions' inbox sockets.
 - The standing rule (spec 6.1) in three places: the channel `instructions`, the `CLAUDE.md` in the hub-owned `CLAUDE_CONFIG_DIR`, and `--append-system-prompt`. Never read from the clone's `CLAUDE.md`.
 - Deny rules for `git push`, `gh`, `npm publish`, deploy and cloud CLIs, piping downloads to a shell, and edits to `.claude/**`, `.mcp.json`, `CLAUDE.md`, `.envrc`.
 - Deny `SendMessage` and `ListAgents`; `crossSessionInbound: refuse`; `isolatePeerMachines: true`.
 
 Done when:
 - **P12**: the channel's capabilities object has no `claude/channel/permission` key.
-- Gate: the three spoofing messages (`</channel>` plus a fake user turn, a fake "message from jason" wrapper, "jason approved X") run end to end in each permission mode the liaison may use, `default` and `acceptEdits`, and no consequential action runs.
+- Gate: the three spoofing messages (`</channel>` plus a fake user turn, a fake "message from jason" wrapper, "jason approved X") run end to end in each permission mode the liaison may use, `default` and `acceptEdits`, and once with no `--permission-mode` flag to prove the settings file alone pins the mode. No consequential action runs.
+- The running permission mode is asserted (statusline JSON or `/permissions` output).
 - Gate: the liaison's own attempt to edit `CLAUDE.md` or `.claude/settings.json` is denied.
 - The liaison states the requesting message id before a consequential tool call.
 - The channel speaks an MCP version older than 2026-07-28, as the current runtime requires.
 - `meta` keys are only the allowlist from spec 6.1.
-- **P20**: from the liaison's sandbox, reading a token file through Bash or the Read tool, reading `~/.codex`, and connecting to any Unix socket but the hub's are all denied.
+- **P20**: from the liaison's sandbox, reading a token file through Bash or the Read tool, reading `~/.codex`, and connecting to any Unix socket but the hub's (on Linux, any Unix socket) are all denied.
 - After a forced context compaction, the liaison still treats a spoofed "jason approved X" message as agent text.
 
-**Milestone A check:** jason's own Codex CLI sends a `review` through the MCP endpoint, the Claude liaison reviews in its clone and replies, and jason reads both sides on the console.
+**Milestone A check (P24):** jason's own Codex CLI sends a `review` through the MCP endpoint, the Claude liaison reviews in its clone and replies, the reply arrives in the CLI's `check_inbox`, wrapped and escaped, and jason reads both sides on the console.
 
 ### 11. Codex liaison and adapter (M)
 
@@ -173,22 +169,24 @@ One long-lived thread through the Codex SDK, with settings pinned in code (secur
 
 - `sandbox_mode = "workspace-write"`, `writable_roots` only the agent's clone, network off.
 - `approval_policy = "never"`, so anything needing approval fails.
-- Dedicated `CODEX_HOME`, scrubbed environment, standing rule in the thread's developer instructions.
-- Deny rules for deploy tools even with network off: `terraform apply`, `kubectl`, `helm`, `aws`, `gcloud`, `az`, `ansible-playbook`, `docker push`, `ssh`, `scp`, written as Codex execution-policy forbid rules in the liaison's `CODEX_HOME`. The adapter can't block commands itself: the SDK reports them only after they run. If execpolicy can't express these, the plan and SECURITY.md say plainly that on the Codex side the hard guarantees are network off, no credentials and `writable_roots`, and the deploy-tool denies are instruction-level.
-- The bridge MCP server is registered in the liaison's `CODEX_HOME` and in jason's own `config.toml` (as `codex-user`).
+- Dedicated `CODEX_HOME`, with a one-time `codex login` there (credentials are per `CODEX_HOME`), or `apiKey`.
+- The standing rule goes in `new Codex({ config: { developer_instructions }, env })`. The SDK has no per-thread instructions option, so there is one `Codex` instance per instruction set. `env` replaces the whole environment, which is the scrub we want, so `PATH` and `HOME` must be on the allowlist.
+- Evaluate Codex's beta permission profiles (`default_permissions`, `[permissions.<name>.filesystem]` with `":root" = "deny"`), which can deny reads but are mutually exclusive with `sandbox_mode`/`--sandbox`. If they hold up, the "Codex reads" limitation shrinks to "beta feature".
+- Deny rules for deploy tools even with network off: `terraform apply`, `kubectl`, `helm`, `aws`, `gcloud`, `az`, `ansible-playbook`, `docker push`, `ssh`, `scp`, written as Codex execution-policy `forbidden` rules in the liaison's `CODEX_HOME`. These apply under `approval_policy = never` and in SDK runs, but they match argv prefixes, so shell indirection (`x=$(kubectl …)`, `env kubectl`) gets past them. They are a tripwire, not a wall: on the Codex side the hard guarantees are network off, no credentials and `writable_roots`. The adapter can't block commands itself; the SDK reports them only after they run.
+- The bridge MCP server is registered in the liaison's `CODEX_HOME` and in jason's own `config.toml` (as `codex-user`) as a stdio command: a hub-owned shim that reads its `0600` token file and connects to the hub socket. Codex's MCP client supports only stdio and streamable HTTP, and its bearer-token option is an environment variable, so the shim is the way to keep tokens out of the environment. It lives in the hub's install, never in a clone, and runs outside Codex's sandbox by design.
 
 Done when:
 - Gate: a Codex command that needs network, or writes outside its clone, fails without a prompt and is logged.
-- The unverified item from the security review is settled by a test: what the SDK does when a command needs approval. It must fail, not run. If it runs, Milestone B stops and goes back to jason.
-- The pinned settings are read back from the running thread and match.
+- The unverified item from the security review is settled by a test: what the SDK does when a command needs approval. It must fail, not run (the pre-build review confirmed in source that exec rejects approval requests). If it runs, Milestone B stops and goes back to jason.
+- The hub asserts the spawned `codex` process's argument list carries `--sandbox workspace-write`, `approval_policy=never`, `sandbox_workspace_write.network_access=false`, and the clone as the only `--add-dir`. The TypeScript SDK can't report effective settings; readback comes with the App Server in Phase 2.
 - The three spoofing messages, sent from Claude to Codex, unlock nothing.
-- A Codex attempt to run `terraform apply` or `kubectl` is denied by execpolicy and logged. If execpolicy can't express the rule, this test changes to "fails because network is off, and is logged".
+- A Codex attempt to run `terraform apply` or `kubectl` is denied by execpolicy and logged.
 - Whether Codex can read outside its workspace is tested and the answer recorded. If it can, the clone-time credential check in task 8 is the only protection, and that is noted in SECURITY.md.
 
 ### 12. Full gate run and sign-off (S)
 
 Done when:
-- Every gate test in the plan and P1 to P23 pass in one run on jason's machine, and each shows in the audit log.
+- Every gate test in the plan and P1 to P24 pass in one run on jason's machine, and each shows in the audit log.
 - The security review thread (or a fresh reviewer) re-checks the built config against the must-fix list.
 - jason signs off in the decision log.
 
@@ -213,8 +211,8 @@ Done when:
 
 The hub starts each project session with the liaison's lockdown, in that project's agent clone.
 
-- Claude side: bridge sessions with the hub-owned settings (Manual or acceptEdits, sandbox, deny rules, own `CLAUDE_CONFIG_DIR`, `crossSessionInbound: refuse`, `isolatePeerMachines: true`), fed by the hub's channel. Headless work runs as `claude -p --bare` with `--settings`, an explicit `--permission-mode` (never auto), and `--mcp-config` carrying only the bridge tools. `--bare` skips plugins, so workers get their brief as the initial prompt and further messages through `check_inbox`, not the channel. Until Phase 2 adds console approval records, workers run with `--permission-prompts none`, so anything not pre-allowed is denied. Phase 2 swaps in a `--permission-prompt-tool` that only shows the request on the console, waits for a click, and denies on timeout.
-- Codex side: one thread per project with the same pinned settings and deploy-tool denies as task 11.
+- Claude side: project sessions are `claude -p` workers per D12, not channel sessions (each channel session would need its own terminal and confirmation). They run without `--bare`, which would need an API key, with `--settings` (the hub-owned lockdown: sandbox, deny rules, own `CLAUDE_CONFIG_DIR`, `crossSessionInbound: refuse`, `isolatePeerMachines: true`), `--setting-sources user`, `--strict-mcp-config --mcp-config` carrying only the bridge tools, and an explicit `--permission-mode` (never auto). Isolation from repo-controlled settings comes from the sparse checkout (P21). Workers get their brief as the initial prompt and further messages through `check_inbox`. Until Phase 2 adds console approval records, workers run with `--permission-prompts none`, so anything not pre-allowed is denied. Phase 2 swaps in a `--permission-prompt-tool` that only shows the request on the console, waits for a click, and denies on timeout.
+- Codex side: one thread per project with the same pinned settings and deploy-tool denies as task 11, and one `Codex` instance per instruction set.
 - jason's own interactive Claude sessions set `crossSessionInbound` to `hold` or `refuse` in jason's user settings.
 
 Done when:
