@@ -88,6 +88,7 @@ test('gate: CODEX_HOME pins workspace-write, approval never, network off, no ext
   assert.match(toml, /^exclude_tmpdir_env_var = true$/m);
   assert.match(toml, /^exclude_slash_tmp = true$/m);
   assert.match(toml, /^trust_level = "untrusted"$/m);
+  assert.match(toml, /^tool_timeout_sec = 90$/m);
   assert.ok(toml.includes(JSON.stringify(CODEX_DEVELOPER_INSTRUCTIONS)));
   assert.ok(CODEX_DEVELOPER_INSTRUCTIONS.includes(CODEX_STANDING_RULE));
   assert.ok(!/danger-full-access|on-request|bypass/.test(toml));

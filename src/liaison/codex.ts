@@ -131,6 +131,8 @@ export function codexConfigToml(p: CodexLiaisonPaths): string {
     '[mcp_servers.bridge]',
     `command = ${tomlString(p.shimCommand.command)}`,
     `args = [${p.shimCommand.args.map(tomlString).join(', ')}]`,
+    // Above check_inbox's longest wait (45 s); Codex's default is 60 s.
+    'tool_timeout_sec = 90',
     '',
     `[projects.${tomlString(clone)}]`,
     'trust_level = "untrusted"',
