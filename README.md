@@ -38,18 +38,17 @@ Each user brings their own accounts. The bridge never touches vendor login token
 
 ## Roadmap
 
-1. **Phase 0:** trial OpenAI's official `codex-plugin-cc` first.
-2. **Phase 1:** hub, console, Claude liaison over a channel, Codex liaison over the Codex SDK, with every security gate test passing.
-3. **Routing, right after the Phase 1 gate:** each liaison routes to projects on its own side (for example, an app team on Claude asking devops on Codex), through a hub-checked allowlist.
-4. **Phase 2:** Codex App Server, Codex approvals on the console.
-5. **Later:** more models as new adapters, other users, an optional ChatGPT front door, each with its own review.
+1. **Phase 1:** hub, console, Claude liaison over a channel, Codex liaison over the Codex SDK, with every security gate test passing.
+2. **Routing, right after the Phase 1 gate:** each liaison routes to projects on its own side (for example, an app team on Claude asking devops on Codex), through a hub-checked allowlist.
+3. **Phase 2:** Codex App Server, Codex approvals on the console.
+4. **Later:** more models as new adapters, other users, an optional ChatGPT front door, each with its own review.
 
 ## Docs
 
 - [Protocol spec](docs/protocol-spec.md): message format, tools, wrapper, auth, guards
 - [Phase 1 build plan](docs/phase1-build-plan.md): tasks with their done criteria
 - [Decision log](docs/decision-log.md): what was decided and why
-- [Security review](docs/research/security-review.md)
+- [Security review](docs/security-review.md)
 - [AGENTS.md](AGENTS.md): rules for AI agents working on this repo
 
 ## License

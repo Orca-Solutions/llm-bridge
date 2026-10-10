@@ -1,6 +1,6 @@
 # Bridge message protocol, v0.1 (draft)
 
-Status: draft, 2026-10-09. Nothing is built yet. All eight plan decisions are settled, and the independent security review thread has checked this spec against its findings. Items still marked **[provisional]** are details this draft had to pick; they change if jason or the security review says otherwise. Source of truth for intent: the [Architecture Plan](https://claude.ai/code/artifact/89c82082-cbfa-4cd3-82f3-6cf0bb091b2e) and [security-review.md](research/security-review.md). Where this spec and the plan disagree, the plan wins and this spec gets fixed.
+Status: draft, updated 2026-10-10 with the pre-build review's fixes, which jason approved. Nothing is built yet. All eight plan decisions are settled, and the independent security review thread has checked this spec against its findings. Items still marked **[provisional]** are details this draft had to pick; they change if jason or the security review says otherwise. Source of truth for intent: the [Architecture Plan](https://claude.ai/code/artifact/89c82082-cbfa-4cd3-82f3-6cf0bb091b2e) and [security-review.md](security-review.md). Where this spec and the plan disagree, the plan wins and this spec gets fixed.
 
 The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
@@ -39,7 +39,7 @@ These are the trust rules in protocol form. Every other section is subordinate t
 | Side | A platform: `claude` or `codex` in v1. Later, one per added model. |
 | Liaison | The long-lived session on each side (a Claude Code session, a Codex thread). One per side. |
 | Project | A repo registered in the hub's config for one side. Each side has its own list; projects don't pair across the bridge. |
-| Project session | A hub-started session that works in one project's agent clone: a Claude Code bridge session or `claude -p --bare` worker on the Claude side, a Codex thread on the Codex side. Never one of jason's own sessions. |
+| Project session | A hub-started session that works in one project's agent clone: a `claude -p` worker on the Claude side (D12), a Codex thread on the Codex side. Never one of jason's own sessions. |
 | Session | A liaison or a project session. Each has its own hub credential. |
 | Principal | An authenticated caller of the hub: `human`, `claude-adapter`, `codex-adapter`, `codex-user`. See 9.1. |
 | Thread | An ordered conversation with one project per side, fixed once set, and its own guard counters. |
@@ -97,7 +97,7 @@ This matches the plan's envelope: projects are a pair at thread level, one per s
 | `from.session` | string | hub | `"liaison"`, `"project"` for a project session, `"outside"` for a `codex-user` client, `"console"` for the human. |
 | `from.owner` | string | hub | The user the principal belongs to. Always `"jason"` in v1; exists so multi-user support is a data change, not a schema change. |
 | `to.agent` | string | sender | A side. `"human"` is not a valid target; use `ask_human`. |
-| `to.session` | string | hub | `"liaison"` or `"project"`, worked out from the sender's role and the tool input (5.1). |
+| `to.session` | string | hub | `"liaison"`, `"project"` or `"outside"`, worked out from the sender's role, the thread's opener and the tool input (5.1). |
 | `provenance.principal` | enum | hub | `human`, `claude-adapter`, `codex-adapter`, `codex-user`. |
 | `provenance.via` | enum | hub | `console`, `channel`, `mcp`, `codex-sdk`, later `app-server`. Diagnostic only; never used for trust decisions. |
 | `provenance.authenticated` | bool | hub | Always `true` on a stored message; unauthenticated calls are refused before storage. Present so a delivered copy states it. |
@@ -182,6 +182,7 @@ Who may send where:
 | Liaison | Its own side | `true` | The thread's project session on its side (routing leg). If the thread has no project bound for this side yet, `bind_project` names one (section 7) |
 | Project session | Its own side | `false` | Its own liaison only. Replies retrace the path, never straight across the bridge |
 | `codex-user` client | `claude` | `false` | The Claude liaison only |
+| Liaison | The other side, on a thread opened by a `codex-user` client | `false` | That client's inbox (`to.session = "outside"`), read with `check_inbox` |
 
 Any other combination is refused with `route_forbidden`. `bind_project` is accepted only from a liaison, only on a routing leg, and only while its side's project on the thread is unbound. `thread_id` omitted opens a new thread whose opening side is stamped per 4.5.
 
@@ -189,7 +190,7 @@ Output: `{ "message_id": "msg_…", "thread_id": "thr_…", "state": "queued" | 
 
 ### 5.2 `check_inbox`
 
-For clients that can't receive pushes, and for the Claude liaison when the channel won't load.
+For clients that can't receive pushes: `codex-user` clients and `claude -p` workers. An interactive liaison doesn't poll on its own, so `check_inbox` is not its fallback; if the channel won't load, the fallback is the Agent SDK (decision 3). With the `codex-user` token, `check_inbox` returns replies on threads that client opened.
 
 Input: `{ "wait_seconds": 45, "max": 20 }` (wait capped at 45).
 Output: `{ "messages": [ <delivered form, section 6> ], "more": false }`. Returned messages are marked delivered to that session. The output wraps and escapes every agent-supplied string exactly as a pushed delivery would.
@@ -223,6 +224,7 @@ The channel plugin emits each message as a channel event. The hub sets `source` 
 ```
 
 - `meta` keys are a fixed allowlist: `from_agent`, `from_session`, `to_session`, `provenance`, `project_claude`, `project_codex`, `thread_id`, `message_id`, `kind`, `hop`, `turn`, `expects_reply`, `in_reply_to`. Values match `^[A-Za-z0-9_.:-]{1,64}$`; anything else is a hub bug and fails closed. Project names are restricted to that pattern at registration.
+- The channel server is registered user-scope in the hub-owned `CLAUDE_CONFIG_DIR` (its `.claude.json`), never in a clone's `.mcp.json`. Claude Code spawns it; it connects to the hub socket with its own token file and runs outside the Bash sandbox, so the `denyRead` on token files doesn't cover it, by design. `source` is the server's configured name.
 - The plugin MUST NOT declare the `claude/channel/permission` capability. The key is absent from its capabilities object, not set to `false`.
 - **Standing rule.** The same text goes in three places, because the channel's `instructions` string is delivered once at connect and can fall out of context after compaction: the channel `instructions`; the `CLAUDE.md` inside the liaison's hub-owned `CLAUDE_CONFIG_DIR`; and `--append-system-prompt` when the hub starts the liaison. It never comes from the agent clone's `CLAUDE.md`, which Codex can write. The text names two classes, with no exception clause **[provisional wording]**:
 
@@ -339,11 +341,13 @@ Rules:
 
 - The hub listens on a Unix socket for sessions and outside clients, and on loopback for the console. Nothing binds to a public interface in v1.
 - **Tokens are passed by file, never by environment variable or command-line argument**, because a same-user process can read another's environment and argv. Each token is a `0600` file in the hub's state directory.
-- The hub's state directory, the token files and `~/.codex` are in the Claude liaison's and project sessions' `sandbox.filesystem.denyRead` and credential denies, and covered by `Read()` deny rules, so neither Bash nor the Read tool can reach them. `sandbox.network.allowUnixSockets` lists only the hub's session socket.
+- The hub's state directory, the token files and `~/.codex` are in the Claude liaison's and project sessions' `sandbox.filesystem.denyRead` and credential denies, and covered by `Read()` deny rules, so neither Bash nor the Read tool can reach them.
+- Unix sockets from sandboxed Bash: on macOS, `sandbox.network.allowUnixSockets` lists only the hub's session socket. Linux ignores that setting, so there Unix sockets stay blocked (the default) and the channel process, outside the sandbox, carries all hub traffic.
+- **Codex reaches the hub through a shim.** Codex's MCP client supports only stdio and streamable HTTP, and its bearer-token option is an environment variable. So the bridge is registered in each `config.toml` (the liaison's `CODEX_HOME` and jason's own, for `codex-user`) as a stdio command: a hub-owned shim that reads its `0600` token file and connects to the hub socket. The shim lives in the hub's install, never in a clone, and runs outside Codex's sandbox (MCP servers Codex spawns are unsandboxed, with network), by design.
 - The approve, deny, unpark, add-route, pause, stop and human-message endpoints accept only the human credential. Any other token there gets 401, even if every other check passes.
 - `codex-user` messages are agent messages. jason typing in a Codex chat does not make them human: the Codex model wrote what reaches the bridge. Revoking a liaison's token never revokes `codex-user`'s, and the reverse.
 - The kill switch revokes the affected sessions' tokens immediately; restarting a session issues a new one.
-- Residual gap, stated so nobody relies on it: in v1 the hub and all sessions run as jason's OS user. Codex's sandbox does not restrict reads, so a Codex process could read token files and the audit log. The fix is the "before unattended" step of running the hub under its own OS user. Until then, auth stops accidental and casual misuse and makes attempts visible in the log; on the Codex side it is not a hard wall.
+- Residual gap, stated so nobody relies on it: in v1 the hub and all sessions run as jason's OS user. Codex's sandbox does not restrict reads, so a Codex process could read token files and the audit log. The fix is the "before unattended" step of running the hub under its own OS user. Until then, auth stops accidental and casual misuse and makes attempts visible in the log; on the Codex side it is not a hard wall. Codex's beta permission profiles (`default_permissions`, `[permissions.<name>.filesystem]` with `":root" = "deny"`) can deny reads, but they are mutually exclusive with `sandbox_mode`/`--sandbox`; build plan task 11 evaluates them.
 
 ### 9.2 Console API
 
@@ -372,7 +376,7 @@ Every request, reads included, needs the human session cookie; an agent's reques
 |---|---|---|
 | Hops per thread | 8 | Park `hop_limit` |
 | Turns per thread | 20 | Park `turn_limit` |
-| Daily spend per side | Set by jason at first run | Park every thread on that side, `spend_limit` |
+| Daily spend per side | Set by jason at first run, in estimated USD | Park every thread on that side, `spend_limit`, and stop feeding that side's channel |
 | Messages per hour, all threads | 60 **[provisional]** | Park the sending thread, `rate_limit` |
 | Messages per hour, per principal | 40 **[provisional]** | Same |
 | New threads per day | 20 **[provisional]** | Refuse with `limit_threads` |
@@ -381,7 +385,7 @@ Every request, reads included, needs the human session cookie; an agent's reques
 | Messages per route per hour | 20 **[provisional]** | Park `route_limit` |
 | Body size | 64 KiB | Refuse, `body_too_large` |
 
-Hop and turn defaults are decision 5, which jason picked on 2026-10-09. Hourly windows are sliding, not reset on the hour, and per-principal counters keep one side from spending the other's budget.
+Hop and turn defaults are decision 5, which jason picked on 2026-10-09. Spend is estimated USD computed by the hub from token counts at list price, per side per day (D13): on the Claude side from the liaison's OpenTelemetry metrics (`claude_code.token.usage`, sent to an OTLP receiver in the hub), on the Codex side from Codex SDK `turn.completed` usage. No vendor caps or bills an interactive subscription session, so this is an estimate. On trip the hub parks and stops delivering; it can't stop a session itself. Hourly windows are sliding, not reset on the hour, and per-principal counters keep one side from spending the other's budget.
 
 Counting: every delivered leg is one turn. An agent-originated `ask`, `task`, `review` or `reply` leg adds one hop, routing legs included, and fan-out adds one hop per destination thread. `status` adds a turn but no hop.
 
@@ -446,6 +450,7 @@ Each test must leave nothing unlocked and must appear in the audit log. P-tests 
 | P21 | An agent clone | Contains no `.claude/`, `.mcp.json`, `.codex/`, `.agents/`, `.envrc` or `.vscode/` (sparse checkout) |
 | P22 | Body containing an AWS key prefix or a private-key block | Thread parks with `secret_scan`; nothing delivered |
 | P23 | `send_message` with a malformed `thread_id`, or one the caller isn't on | `not_a_participant` |
+| P24 | A `codex-user` client sends a review and the Claude liaison replies | The reply arrives in that client's `check_inbox`, wrapped and escaped |
 | R1 | `bind_project` naming a project not on the registered list | `unknown_project` |
 | R2 | `bind_project` making an unlisted pair | Parked `route_not_allowed`; console offers one-click add of that one pair; nothing delivered |
 | R3 | Project session sends across the bridge, or a second `bind_project` on a bound thread | `route_forbidden` |
@@ -460,3 +465,14 @@ Each test must leave nothing unlocked and must appear in the audit log. P-tests 
 
 - Exact wording of the standing rule (6.1).
 - Cap values marked provisional in section 10.
+- Which OS jason's dev machine runs (D14), which decides the Unix-socket setting in 9.1.
+
+## 15. Versions
+
+| Component | Pin | Why |
+|---|---|---|
+| Claude Code | 2.1.286 or later | Channel relay treated `false` as declared before 2.1.234; `--permission-prompts none` from 2.1.259; auto became the interactive default in 2.1.283; fully bare mode from 2.1.286 |
+| `@modelcontextprotocol/sdk` | A pinned 1.x release that doesn't negotiate MCP 2026-07-28 | A channel server on 2026-07-28 isn't registered by the current runtime; `MCP_PROTOCOL_NEGOTIATION=legacy` is a second guard |
+| Codex CLI and `@openai/codex-sdk` | Exact versions, pinned at build plan task 1 | The TypeScript SDK wraps `codex exec --experimental-json` and isn't labelled stable |
+
+The hub checks `claude --version` and `codex --version` at start and refuses to launch below the minimum.
