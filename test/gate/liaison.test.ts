@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,8 +44,10 @@ function paths(root: string): LiaisonPaths {
   };
 }
 
+// macOS keeps temp folders behind a symlink (/var is /private/var), and a
+// child's cwd comes back as the real path, so tests work in the real path.
 function tmp(t: { after: (fn: () => void) => void }, prefix = 'llmb-liaison-'): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -353,6 +355,17 @@ test('gate: the launcher runs Claude Code in a fresh sparse clone with the scrub
   const done = runClaudeLiaison({ stateDir: r.paths.stateDir, claudeBin: bin });
   await until(() => existsSync(record), 10_000);
   const rec = JSON.parse(readFileSync(record, 'utf8')) as { argv: string[]; cwd: string; env: Record<string, string>; pid: number };
+  // If an assertion fails before Stop, don't leave the stand-in running.
+  t.after(async () => {
+    const { pidsWithMarker } = await import('../../src/supervisor/proc.ts');
+    for (const pid of [rec.pid, ...pidsWithMarker(rec.env[SESSION_MARKER_VAR]!)]) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  });
 
   assert.ok(rec.cwd.startsWith(join(wp.clonesDir, 'claude') + '/'));
   assert.ok(!existsSync(join(rec.cwd, '.claude')), 'sparse clone leaves out .claude/');

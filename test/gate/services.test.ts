@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,7 +41,7 @@ async function boot(t: { after: (fn: () => unknown) => void }, root: string): Pr
 }
 
 function tmp(t: { after: (fn: () => void) => void }): string {
-  const root = mkdtempSync(join(tmpdir(), 'llmb-svc-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'llmb-svc-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
