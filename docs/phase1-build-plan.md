@@ -13,7 +13,7 @@ Each task below has a **Done when** list. A task is done only when every item on
 | Autonomy limits (decision 5) | 8 hops, 20 turns, a daily spend cap jason sets, edits only inside each side's clone | jason, 2026-10-09 |
 | Where it runs (decision 6) | jason's dev machine | jason, 2026-10-09 |
 | Language (decision 7) | TypeScript on Node, SQLite | jason, 2026-10-09 |
-| Dev machine OS | macOS or Linux, not yet recorded; some sandbox settings differ (D14) | Provisional |
+| Dev machine OS | macOS, jason's MacBook Air (D14). The Linux variants stay in the docs for a later machine | jason, 2026-10-10 |
 | Claude workers (routing) | `claude -p` without `--bare`, on jason's plan login (D12) | jason, 2026-10-10 |
 | Spend cap metric | Estimated USD from token counts at list price, per side per day (D13) | Pre-build review |
 | Projects (decision 8) | One liaison per side, each routing on its own side from a registered project list. Routing switches on right after the Phase 1 gate, behind its own gate, with the security re-check's six additions | jason, 2026-10-09 |

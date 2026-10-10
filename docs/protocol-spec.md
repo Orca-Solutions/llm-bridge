@@ -465,7 +465,6 @@ Each test must leave nothing unlocked and must appear in the audit log. P-tests 
 
 - Exact wording of the standing rule (6.1).
 - Cap values marked provisional in section 10.
-- Which OS jason's dev machine runs (D14), which decides the Unix-socket setting in 9.1.
 
 ## 15. Versions
 
