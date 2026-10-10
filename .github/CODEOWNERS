@@ -1,0 +1,13 @@
+# jason reviews every change to the rules agents follow, the CI that checks
+# them, and the dependency manifest (build plan task 1). Enforced once branch
+# protection on main requires code owner review.
+*                    @jfricano
+/AGENTS.md           @jfricano
+/CLAUDE.md           @jfricano
+/SECURITY.md         @jfricano
+/.claude/            @jfricano
+/.codex/             @jfricano
+/.agents/            @jfricano
+/.github/            @jfricano
+/package.json        @jfricano
+/package-lock.json   @jfricano
