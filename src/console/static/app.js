@@ -73,6 +73,21 @@
     }
   }
 
+  function renderGuardFlags(flags) {
+    const ul = $('guard-flags');
+    ul.replaceChildren();
+    if (flags.length === 0) ul.append(el('li', 'muted', 'None.'));
+    for (const f of flags) {
+      const li = el('li');
+      li.append(el('div', 'meta', f.created_at + ' ' + f.project + ' ' + f.ref + ' ' + f.commit.slice(0, 12)));
+      li.append(el('div', 'body', f.hits.map((h) => h.rule + ': ' + h.path).join(', ')));
+      const det = el('details');
+      det.append(el('summary', null, 'Diff'), el('pre', 'diff', f.diff));
+      li.append(det);
+      ul.append(li);
+    }
+  }
+
   function renderThreads(threads) {
     const ul = $('threads');
     ul.replaceChildren();
@@ -119,6 +134,7 @@
       renderGuards(data.guards);
       renderQuestions(data.questions);
       renderThreads(data.threads);
+      renderGuardFlags(data.guard_flags);
       if (selected) renderThread(await api('/api/threads/' + encodeURIComponent(selected)));
     } catch (e) {
       showError(e.message);
@@ -150,6 +166,8 @@
     $('stop').addEventListener('click', () => act('/api/threads/' + selected + '/stop', {}, 'Stop this thread? Undelivered messages are discarded.'));
     $('stop-claude').addEventListener('click', () => act('/api/sides/claude/stop', {}, 'Stop the Claude side? Its sessions are killed and their tokens revoked.'));
     $('stop-codex').addEventListener('click', () => act('/api/sides/codex/stop', {}, 'Stop the Codex side? Its sessions are killed and their tokens revoked.'));
+    $('resume-claude').addEventListener('click', () => act('/api/sides/claude/resume', {}, 'Resume the Claude side? It gets new token files; parked threads stay parked until you unpark them.'));
+    $('resume-codex').addEventListener('click', () => act('/api/sides/codex/resume', {}, 'Resume the Codex side? It gets new token files; parked threads stay parked until you unpark them.'));
     $('stop-all').addEventListener('click', () => act('/api/stop-all', {}, 'Stop everything?'));
     refresh();
     setInterval(refresh, 3000);

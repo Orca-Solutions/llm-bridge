@@ -3,6 +3,8 @@
 // explicit console reload only; a config that fails validation is refused and
 // the previous one stays in force.
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import type { Side } from './types.ts';
 
 export const META_VALUE = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -40,6 +42,12 @@ export interface HubConfig {
   daily_spend_usd: Record<Side, number>;
   limits: Limits;
   console_port: number;
+  /** Where the agents' bare repos and clones live: outside the state
+   * directory (agents can't read that) and outside the maintainer's own
+   * checkouts. */
+  workspace: { repos_dir: string; clones_dir: string };
+  /** Loopback port for the OTLP receiver that measures Claude-side spend. */
+  otlp_port: number;
 }
 
 export class ConfigError extends Error {}
@@ -52,7 +60,7 @@ function positiveInt(v: unknown, name: string): number {
 export function validateConfig(raw: unknown): HubConfig {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ConfigError('config must be an object');
   const c = raw as Record<string, unknown>;
-  const allowed = new Set(['owner', 'projects', 'routes', 'routing_enabled', 'daily_spend_usd', 'limits', 'console_port']);
+  const allowed = new Set(['owner', 'projects', 'routes', 'routing_enabled', 'daily_spend_usd', 'limits', 'console_port', 'workspace', 'otlp_port']);
   for (const k of Object.keys(c)) if (!allowed.has(k)) throw new ConfigError(`unknown config key: ${k}`);
 
   const owner = c.owner ?? 'jason';
@@ -106,7 +114,25 @@ export function validateConfig(raw: unknown): HubConfig {
     throw new ConfigError('console_port must be 1024 to 65535');
   }
 
-  return { owner, projects: out, routes: [], routing_enabled: false, daily_spend_usd: daily, limits, console_port: port };
+  const otlp = c.otlp_port ?? 7078;
+  if (typeof otlp !== 'number' || !Number.isInteger(otlp) || otlp < 1024 || otlp > 65535 || otlp === port) {
+    throw new ConfigError('otlp_port must be 1024 to 65535 and differ from console_port');
+  }
+
+  const wsRaw = (c.workspace ?? {}) as Record<string, unknown>;
+  if (typeof wsRaw !== 'object' || Array.isArray(wsRaw)) throw new ConfigError('workspace must be an object');
+  for (const k of Object.keys(wsRaw)) if (k !== 'repos_dir' && k !== 'clones_dir') throw new ConfigError(`unknown workspace key: ${k}`);
+  const dirOf = (v: unknown, fallback: string, name: string): string => {
+    const d = v ?? fallback;
+    if (typeof d !== 'string' || !isAbsolute(d)) throw new ConfigError(`workspace.${name} must be an absolute path`);
+    return d;
+  };
+  const workspace = {
+    repos_dir: dirOf(wsRaw.repos_dir, join(homedir(), 'bridge', 'repos'), 'repos_dir'),
+    clones_dir: dirOf(wsRaw.clones_dir, join(homedir(), 'bridge', 'clones'), 'clones_dir'),
+  };
+
+  return { owner, projects: out, routes: [], routing_enabled: false, daily_spend_usd: daily, limits, console_port: port, workspace, otlp_port: otlp };
 }
 
 export function loadConfig(path: string): HubConfig {

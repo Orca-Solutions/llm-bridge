@@ -106,6 +106,24 @@ CREATE TABLE IF NOT EXISTS spend (
   PRIMARY KEY (side, day)
 );
 
+CREATE TABLE IF NOT EXISTS guard_refs (
+  project TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  sha TEXT NOT NULL,
+  PRIMARY KEY (project, ref)
+);
+
+CREATE TABLE IF NOT EXISTS guard_flags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  hits TEXT NOT NULL,
+  diff TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (project, commit_sha)
+);
+
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   at TEXT NOT NULL,
@@ -427,6 +445,41 @@ export class Store {
   spendOn(side: Side, day: string): number {
     const row = this.db.prepare('SELECT usd FROM spend WHERE side = ? AND day = ?').get(side, day) as Row | undefined;
     return row ? Number(row.usd) : 0;
+  }
+
+  // ---- repo-file guard ----
+
+  guardRefs(project: string): Record<string, string> | null {
+    const rows = this.db.prepare('SELECT ref, sha FROM guard_refs WHERE project = ?').all(project) as Row[];
+    const known = this.db.prepare("SELECT 1 FROM guard_refs WHERE project = ? AND ref = '#baseline'").get(project);
+    if (!known) return null;
+    return Object.fromEntries(rows.filter((r) => r.ref !== '#baseline').map((r) => [r.ref as string, r.sha as string]));
+  }
+
+  setGuardRefs(project: string, refs: Record<string, string>): void {
+    this.db.prepare('DELETE FROM guard_refs WHERE project = ?').run(project);
+    const ins = this.db.prepare('INSERT INTO guard_refs (project, ref, sha) VALUES (?, ?, ?)');
+    ins.run(project, '#baseline', '-');
+    for (const [ref, sha] of Object.entries(refs)) ins.run(project, ref, sha);
+  }
+
+  addGuardFlag(f: { project: string; ref: string; commit: string; hits: unknown; diff: string }, at: string): boolean {
+    const r = this.db
+      .prepare('INSERT OR IGNORE INTO guard_flags (project, ref, commit_sha, hits, diff, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(f.project, f.ref, f.commit, JSON.stringify(f.hits), f.diff, at);
+    return Number(r.changes) > 0;
+  }
+
+  guardFlags(): { id: number; project: string; ref: string; commit: string; hits: { path: string; rule: string }[]; diff: string; created_at: string }[] {
+    return (this.db.prepare('SELECT * FROM guard_flags ORDER BY id DESC').all() as Row[]).map((r) => ({
+      id: Number(r.id),
+      project: r.project as string,
+      ref: r.ref as string,
+      commit: r.commit_sha as string,
+      hits: JSON.parse(r.hits as string) as { path: string; rule: string }[],
+      diff: r.diff as string,
+      created_at: r.created_at as string,
+    }));
   }
 
   // ---- audit ----

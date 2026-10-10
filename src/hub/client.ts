@@ -27,6 +27,8 @@ export interface ClientOptions {
   tokenFile: string;
   /** Ask the hub to push deliveries to this connection (the channel plugin). */
   onPush?: (delivery: Delivery) => Promise<void>;
+  /** Called once if an established connection closes. */
+  onClose?: () => void;
 }
 
 export class HubClient {
@@ -72,8 +74,10 @@ export class HubClient {
       );
       socket.on('data', (d: Buffer) => reader.push(d));
       socket.on('close', () => {
+        const wasUp = this.session !== null;
         reject(new HubCallError('disconnected', 'hub connection closed'));
         this.failAll(new HubCallError('disconnected', 'hub connection closed'));
+        if (wasUp && this.opts.onClose) this.opts.onClose();
       });
     });
     socket.write(JSON.stringify({ type: 'hello', token, protocol_version: PROTOCOL_VERSION, push: !!this.opts.onPush }) + '\n');

@@ -15,6 +15,8 @@
     <button id="stop-claude" class="danger">Stop Claude side</button>
     <button id="stop-codex" class="danger">Stop Codex side</button>
     <button id="stop-all" class="danger">Stop everything</button>
+    <button id="resume-claude">Resume Claude side</button>
+    <button id="resume-codex">Resume Codex side</button>
   </div>
 </header>
 <main>
@@ -23,6 +25,9 @@
     <ul id="questions"></ul>
     <h2>Threads</h2>
     <ul id="threads"></ul>
+    <h2>Repo guard flags</h2>
+    <p class="muted">Agent commits that touch instruction, CI or infrastructure files. Review the diff before you merge anything from that branch.</p>
+    <ul id="guard-flags"></ul>
     <h2>New message</h2>
     <form id="compose-new">
       <label>To <select name="to"><option value="claude">Claude liaison</option><option value="codex">Codex liaison</option><option value="both">Both</option></select></label>

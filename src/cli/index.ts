@@ -3,14 +3,20 @@
 //   llm-bridge init --claude-project NAME --codex-project NAME --daily-spend-usd N [--state-dir DIR] [--console-port P]
 //   llm-bridge hub [--state-dir DIR]
 //   llm-bridge mcp --socket PATH --token-file PATH
-import { existsSync, writeFileSync } from 'node:fs';
+//   llm-bridge repo add PROJECT --from PATH [--state-dir DIR]
+//   llm-bridge liaison claude [--state-dir DIR] [--clone PATH] [--no-mode-flag]
+//   llm-bridge channel --socket PATH --token-file PATH   (Claude Code runs this)
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { validateConfig } from '../core/config.ts';
+import { loadConfig, validateConfig } from '../core/config.ts';
 import { checkVersions } from '../core/versions.ts';
 import { ensureStateDir, startHub } from '../hub/main.ts';
 import { runShim } from '../shim/bridge-mcp.ts';
+import { runChannel } from '../channel/server.ts';
+import { runClaudeLiaison } from '../liaison/launch.ts';
+import { WorkspaceManager, workspacePaths } from '../workspace/manager.ts';
 
 const DEFAULT_STATE_DIR = join(homedir(), '.llm-bridge');
 
@@ -21,6 +27,9 @@ function usage(): never {
       '  llm-bridge init --claude-project NAME --codex-project NAME --daily-spend-usd N [--state-dir DIR] [--console-port P]',
       '  llm-bridge hub [--state-dir DIR]',
       '  llm-bridge mcp --socket PATH --token-file PATH',
+      '  llm-bridge repo add PROJECT --from PATH [--state-dir DIR]',
+      '  llm-bridge liaison claude [--state-dir DIR] [--clone PATH] [--no-mode-flag]',
+      '  llm-bridge channel --socket PATH --token-file PATH',
       '',
     ].join('\n'),
   );
@@ -77,6 +86,62 @@ export async function main(argv: string[]): Promise<void> {
     if (!values.socket || !values['token-file']) usage();
     await runShim(values.socket, values['token-file']);
     return;
+  }
+  if (command === 'channel') {
+    const { values } = parseArgs({ args: rest, options: { socket: { type: 'string' }, 'token-file': { type: 'string' } } });
+    if (!values.socket || !values['token-file']) usage();
+    await runChannel(values.socket, values['token-file']);
+    return;
+  }
+  if (command === 'repo') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: { from: { type: 'string' }, 'state-dir': { type: 'string' } },
+    });
+    if (positionals[0] !== 'add' || !positionals[1] || !values.from) usage();
+    const project = positionals[1]!;
+    const stateDir = resolve(values['state-dir'] ?? DEFAULT_STATE_DIR);
+    const config = loadConfig(join(stateDir, 'config.json'));
+    if (!config.projects.claude.includes(project) && !config.projects.codex.includes(project)) {
+      throw new Error(`${project} is not a registered project in ${join(stateDir, 'config.json')}`);
+    }
+    const wp = workspacePaths(config.workspace);
+    const ws = new WorkspaceManager({ reposDir: wp.reposDir, clonesDir: wp.clonesDir, gitConfigPath: wp.gitConfigPath });
+    const bare = ws.addRepo(project, values.from);
+    // The guard's starting point: everything already in the repo is the
+    // maintainer's; anything agents push after this is checked.
+    const baselineDir = join(stateDir, 'guard-baseline');
+    mkdirSync(baselineDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(baselineDir, `${project}.json`), JSON.stringify(ws.scanGuard(project, {}).seen, null, 2) + '\n', { mode: 0o600 });
+    process.stdout.write(
+      [
+        `bare repo: ${bare}`,
+        'Agents push branches there; nothing reaches GitHub from it. To review their work in your checkout:',
+        `  git remote add bridge ${bare}`,
+        '  git fetch bridge',
+        '',
+      ].join('\n'),
+    );
+    return;
+  }
+  if (command === 'liaison') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        'state-dir': { type: 'string' },
+        clone: { type: 'string' },
+        'no-mode-flag': { type: 'boolean' },
+      },
+    });
+    if (positionals[0] !== 'claude') usage();
+    const code = await runClaudeLiaison({
+      stateDir: resolve(values['state-dir'] ?? DEFAULT_STATE_DIR),
+      clone: values.clone,
+      pinModeFlag: !values['no-mode-flag'],
+    });
+    process.exit(code);
   }
   usage();
 }

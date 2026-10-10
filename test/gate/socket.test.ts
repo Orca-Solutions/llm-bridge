@@ -24,7 +24,7 @@ async function boot(t: { after: (fn: () => unknown) => void }): Promise<RunningH
     JSON.stringify({ projects: { claude: ['app-web'], codex: ['infra-ops'] }, daily_spend_usd: { claude: 5, codex: 5 } }),
     { mode: 0o600 },
   );
-  const running = await startHub({ stateDir: dir, consolePort: 0, log: () => undefined });
+  const running = await startHub({ stateDir: dir, consolePort: 0, otlpPort: 0, log: () => undefined });
   t.after(async () => {
     await running.stop();
     rmSync(dir, { recursive: true, force: true });

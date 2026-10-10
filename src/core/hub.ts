@@ -907,6 +907,31 @@ export class Hub extends EventEmitter {
     return { revoked };
   }
 
+  /** Undo a side's kill switch: issue fresh token files for its revoked
+   * sessions. Threads parked by the stop stay parked until the maintainer
+   * unparks each one. */
+  resumeSide(side: Side): { issued: string[] } {
+    const issued: string[] = [];
+    for (const s of this.sessionsByName.values()) {
+      if (s.side !== side || this.tokens.hasToken(s.name)) continue;
+      this.tokens.issue(s);
+      issued.push(s.name);
+    }
+    this.audit(HUMAN, 'side.resume', 'ok', null, null, null, { side, issued });
+    return { issued };
+  }
+
+  /** Record repo-file guard hits (build plan task 8) for the console. */
+  recordGuardFlags(flags: { project: string; ref: string; commit: string; hits: { path: string; rule: string }[]; diff: string }[]): number {
+    let added = 0;
+    for (const f of flags) {
+      if (!this.store.addGuardFlag(f, this.iso())) continue;
+      added++;
+      this.audit(HUB, 'guard.flag', 'ok', null, null, null, { project: f.project, ref: f.ref, commit: f.commit, rules: f.hits.map((h) => h.rule) });
+    }
+    return added;
+  }
+
   stopAll(): { revoked: string[] } {
     const revoked = [...this.stopSide('claude').revoked, ...this.stopSide('codex').revoked];
     return { revoked };

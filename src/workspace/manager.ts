@@ -85,6 +85,20 @@ export function forbiddenFiles(paths: string[]): string[] {
 
 export class WorkspaceError extends Error {}
 
+/** Where the hub keeps agent-side files, all outside its state directory:
+ * the bridge-only gitconfig (sandboxed git must read it) and the Claude
+ * liaison's hub-owned config folder (sandboxed Bash sources Claude Code's
+ * shell snapshots from it). Siblings of the repos folder, ~/bridge/ by default. */
+export function workspacePaths(ws: { repos_dir: string; clones_dir: string }) {
+  const root = dirname(resolve(ws.repos_dir));
+  return {
+    reposDir: resolve(ws.repos_dir),
+    clonesDir: resolve(ws.clones_dir),
+    gitConfigPath: join(root, 'agent.gitconfig'),
+    claudeConfigDir: join(root, 'claude-liaison-config'),
+  };
+}
+
 export interface WorkspaceOptions {
   reposDir: string;
   clonesDir: string;

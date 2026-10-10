@@ -9,11 +9,16 @@ import { Hub, phase1Sessions } from '../core/hub.ts';
 import { loadConfig, type HubConfig } from '../core/config.ts';
 import { SessionSocket } from './socket.ts';
 import { ConsoleServer } from '../console/server.ts';
+import { Supervisor } from '../supervisor/proc.ts';
+import { WorkspaceManager, workspacePaths } from '../workspace/manager.ts';
+import { GuardScanner, OtlpReceiver, RunWatcher } from './services.ts';
 
 export interface StartOptions {
   stateDir: string;
   /** Override the console port (tests use 0). */
   consolePort?: number;
+  /** Override the OTLP receiver port (tests use 0). */
+  otlpPort?: number;
   log?: (line: string) => void;
 }
 
@@ -22,7 +27,10 @@ export interface RunningHub {
   socket: SessionSocket;
   console: ConsoleServer;
   config: HubConfig;
-  paths: { stateDir: string; socket: string; config: string; db: string; tokens: Record<string, string> };
+  supervisor: Supervisor;
+  guard: GuardScanner | null;
+  otlpPort: number;
+  paths: { stateDir: string; socket: string; config: string; db: string; tokens: Record<string, string>; run: string };
   stop: () => Promise<void>;
 }
 
@@ -65,18 +73,60 @@ export async function startHub(opts: StartOptions): Promise<RunningHub> {
   });
   await consoleServer.listen();
 
+  // Kill switch: the liaison launchers write <state>/run/<session>.json; the
+  // supervisor tracks each session's process tree and kills it on Stop.
+  const runDir = join(opts.stateDir, 'run');
+  mkdirSync(runDir, { recursive: true, mode: 0o700 });
+  const supervisor = new Supervisor();
+  const watcher = new RunWatcher(runDir, hub, supervisor);
+  watcher.start();
+  const kills = new Set<Promise<void>>();
+  hub.on('stop-side', (side: string) => {
+    watcher.scan();
+    const k = supervisor
+      .killSide(side)
+      .then((pids) => hub.audit({ principal: 'hub', name: 'hub' }, 'kill_switch.processes', 'ok', null, null, null, { side, killed: pids.length }))
+      .catch((err) => log(`kill switch for ${side} failed: ${(err as Error).message}`))
+      .finally(() => kills.delete(k));
+    kills.add(k);
+  });
+
+  // Repo-file guard over the bare repos, once they exist (`llm-bridge repo add`).
+  const wsPaths = workspacePaths(config.workspace);
+  let guard: GuardScanner | null = null;
+  if (existsSync(wsPaths.reposDir)) {
+    const ws = new WorkspaceManager({ reposDir: wsPaths.reposDir, clonesDir: wsPaths.clonesDir, gitConfigPath: wsPaths.gitConfigPath });
+    guard = new GuardScanner(hub, ws, join(opts.stateDir, 'guard-baseline'));
+    guard.start();
+  } else {
+    log(`  no bare repos yet at ${wsPaths.reposDir}; the repo-file guard starts with the next hub start after \`llm-bridge repo add\``);
+  }
+
+  // Claude-side spend (D13) from Claude Code's OTel cost metric.
+  const otlp = new OtlpReceiver(hub, opts.otlpPort ?? config.otlp_port);
+  const otlpPort = await otlp.listen();
+
   log(`LLM-Bridge hub running.`);
   log(`  session socket: ${socketPath}`);
   log(`  console login (one use, 10 minutes): ${consoleServer.loginLink()}`);
   for (const [name, path] of Object.entries(tokenPaths)) log(`  ${name} token file: ${path}`);
+  log(`  spend meter (OTLP, loopback): http://127.0.0.1:${otlpPort}`);
 
   return {
     hub,
     socket,
     console: consoleServer,
     config,
-    paths: { stateDir: opts.stateDir, socket: socketPath, config: configPath, db: dbPath, tokens: tokenPaths },
+    supervisor,
+    guard,
+    otlpPort,
+    paths: { stateDir: opts.stateDir, socket: socketPath, config: configPath, db: dbPath, tokens: tokenPaths, run: runDir },
     stop: async () => {
+      watcher.stop();
+      guard?.stop();
+      await Promise.all([...kills]);
+      supervisor.stopAll();
+      await otlp.close();
       await consoleServer.close();
       await socket.close();
       store.close();

@@ -83,6 +83,11 @@ export class TokenRegistry {
     return !!live && timingSafeEqual(hash(presentedToken), live.hash);
   }
 
+  /** True while the session holds any live token. */
+  hasToken(sessionName: string): boolean {
+    return this.tokens.has(sessionName);
+  }
+
   sessions(): SessionInfo[] {
     return [...this.tokens.values()].map((t) => t.session);
   }

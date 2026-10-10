@@ -253,6 +253,12 @@ export class ConsoleServer {
           options: q.options.map(visibleForConsole),
         })),
         guards: this.hub.guardCounters(),
+        guard_flags: this.hub.store.guardFlags().map((f) => ({
+          ...f,
+          ref: visibleForConsole(f.ref),
+          hits: f.hits.map((h) => ({ rule: h.rule, path: visibleForConsole(h.path) })),
+          diff: visibleForConsole(f.diff),
+        })),
       };
     }
     const m = path.match(/^\/api\/threads\/([^/]+)$/);
@@ -290,8 +296,8 @@ export class ConsoleServer {
       if (m[2] === 'pause') return this.hub.pause(m[1]);
       return this.hub.stopThread(m[1]);
     }
-    m = path.match(/^\/api\/sides\/(claude|codex)\/stop$/);
-    if (m) return this.hub.stopSide(m[1] as Side);
+    m = path.match(/^\/api\/sides\/(claude|codex)\/(stop|resume)$/);
+    if (m) return m[2] === 'stop' ? this.hub.stopSide(m[1] as Side) : this.hub.resumeSide(m[1] as Side);
     m = path.match(/^\/api\/questions\/([^/]+)\/answer$/);
     if (m) return this.hub.answerQuestion(m[1], body.answer);
     m = path.match(/^\/api\/approvals\/([^/]+)\/decision$/);
