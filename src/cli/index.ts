@@ -1,7 +1,7 @@
 // llm-bridge command line.
 //
 //   llm-bridge init --claude-project NAME --codex-project NAME --daily-spend-usd N [--state-dir DIR] [--console-port P]
-//   llm-bridge hub [--state-dir DIR]
+//   llm-bridge hub [--state-dir DIR] [--codex]
 //   llm-bridge mcp --socket PATH --token-file PATH
 //   llm-bridge repo add PROJECT --from PATH [--state-dir DIR]
 //   llm-bridge liaison claude [--state-dir DIR] [--clone PATH] [--mode default|acceptEdits] [--no-mode-flag]
@@ -26,7 +26,7 @@ function usage(): never {
     [
       'usage:',
       '  llm-bridge init --claude-project NAME --codex-project NAME --daily-spend-usd N [--state-dir DIR] [--console-port P]',
-      '  llm-bridge hub [--state-dir DIR]',
+      '  llm-bridge hub [--state-dir DIR] [--codex]',
       '  llm-bridge mcp --socket PATH --token-file PATH',
       '  llm-bridge repo add PROJECT --from PATH [--state-dir DIR]',
       '  llm-bridge liaison claude [--state-dir DIR] [--clone PATH] [--mode default|acceptEdits] [--no-mode-flag]',
@@ -69,14 +69,14 @@ export async function main(argv: string[]): Promise<void> {
     return;
   }
   if (command === 'hub') {
-    const { values } = parseArgs({ args: rest, options: { 'state-dir': { type: 'string' } } });
+    const { values } = parseArgs({ args: rest, options: { 'state-dir': { type: 'string' }, codex: { type: 'boolean' } } });
     const versions = checkVersions();
     if (versions.problems.length > 0) {
       for (const p of versions.problems) process.stderr.write(`refusing to start: ${p}\n`);
       process.exit(1);
     }
     process.stdout.write(`claude ${versions.claude}, codex ${versions.codex ?? 'not found'}\n`);
-    const running = await startHub({ stateDir: resolve(values['state-dir'] ?? DEFAULT_STATE_DIR) });
+    const running = await startHub({ stateDir: resolve(values['state-dir'] ?? DEFAULT_STATE_DIR), codex: values.codex });
     const shutdown = () => void running.stop().then(() => process.exit(0));
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);

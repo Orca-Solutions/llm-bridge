@@ -127,6 +127,8 @@ export interface LiaisonPaths {
   /** How Claude Code should start the channel server. */
   channelCommand: { command: string; args: string[] };
   otlpEndpoint: string;
+  /** Other folders holding credentials, such as the Codex liaison's CODEX_HOME. */
+  denyReadExtra?: string[];
   home?: string;
 }
 
@@ -182,7 +184,8 @@ export function liaisonSettings(p: LiaisonPaths, mode: LiaisonMode = 'default'):
   // The config folder itself stays readable (Claude Code's shell snapshots
   // live there and sandboxed Bash sources them); its login files don't.
   const configSecrets = ['.credentials.json', '.claude.json'].map((f) => join(abs(p.configDir), f));
-  const readDeny = [abs(p.stateDir), ...configSecrets, ...CREDENTIAL_DIRS, ...CREDENTIAL_FILES];
+  const extra = (p.denyReadExtra ?? []).map(abs);
+  const readDeny = [abs(p.stateDir), ...configSecrets, ...extra, ...CREDENTIAL_DIRS, ...CREDENTIAL_FILES];
   return {
     permissions: {
       defaultMode: mode,
@@ -205,6 +208,7 @@ export function liaisonSettings(p: LiaisonPaths, mode: LiaisonMode = 'default'):
         ...CREDENTIAL_DIRS.map((d) => `Read(${d}/**)`),
         ...CREDENTIAL_FILES.map((f) => `Read(${f})`),
         ...configSecrets.map((f) => `Read(${ruleAbs(f)})`),
+        ...extra.map((d) => `Read(${ruleAbs(d)}/**)`),
         `Edit(${ruleAbs(p.stateDir)}/**)`,
         `Edit(${ruleAbs(p.configDir)}/**)`,
         `Edit(${ruleAbs(p.gitConfigPath)})`,

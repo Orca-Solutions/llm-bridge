@@ -188,9 +188,46 @@ export class ProcessTracker {
   }
 }
 
+/** Kill every process carrying `marker` and everything below it: for
+ * sessions the hub runs itself (the Codex liaison), whose processes are the
+ * hub's own children and share its process group. Never the hub itself. */
+export async function killMarker(marker: string, graceMs = 2000): Promise<number[]> {
+  const collect = (): number[] => {
+    const procs = snapshot();
+    const pids = new Set<number>(pidsWithMarker(marker));
+    for (const pid of [...pids]) for (const d of descendants(pid, procs)) pids.add(d.pid);
+    pids.delete(process.pid);
+    return [...pids];
+  };
+  const pids = collect();
+  for (const p of pids) {
+    try {
+      process.kill(p, 'SIGTERM');
+    } catch {
+      /* gone */
+    }
+  }
+  const deadline = Date.now() + graceMs;
+  while (Date.now() < deadline && pids.some(alive)) await new Promise((r) => setTimeout(r, 100));
+  for (const p of [...pids.filter(alive), ...collect()]) {
+    try {
+      process.kill(p, 'SIGKILL');
+    } catch {
+      /* gone */
+    }
+  }
+  return pids;
+}
+
 /** Keeps a tracker per running session and kills a whole side on demand. */
 export class Supervisor {
   private readonly trackers = new Map<string, ProcessTracker>();
+  private readonly markers = new Map<string, { side: string; marker: string }>();
+
+  /** A session the hub runs in-process: tracked by its marker alone. */
+  trackMarker(name: string, side: string, marker: string): void {
+    this.markers.set(name, { side, marker });
+  }
 
   track(session: TrackedSession): void {
     this.trackers.get(session.name)?.stopPolling();
@@ -203,6 +240,7 @@ export class Supervisor {
 
   async killSide(side: string): Promise<number[]> {
     const killed: number[] = [];
+    for (const m of this.markers.values()) if (m.side === side) killed.push(...(await killMarker(m.marker)));
     for (const [name, t] of [...this.trackers]) {
       if (t.session.side !== side) continue;
       killed.push(...(await t.kill()));

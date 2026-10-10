@@ -70,6 +70,7 @@ export function prepareClaudeLiaison(opts: ClaudeLaunchOptions): PreparedLaunch 
     gitConfigPath: wp.gitConfigPath,
     channelCommand: { command: process.execPath, args: channelArgs },
     otlpEndpoint: `http://127.0.0.1:${config.otlp_port}`,
+    denyReadExtra: [wp.codexHome],
   };
   prepareConfigDir(paths, opts.mode);
   const spec = liaisonCommand(paths, { pinModeFlag: opts.pinModeFlag, claudeBin: opts.claudeBin, mode: opts.mode });
