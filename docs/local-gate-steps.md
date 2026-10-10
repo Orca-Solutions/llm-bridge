@@ -10,7 +10,7 @@ You need macOS, Node 22.18 or later (`node --version`), Claude Code 2.1.286 or l
 
 ```sh
 cd ~/coding/llm-bridge
-git fetch origin && git checkout phase1-milestone-a
+git fetch origin && git checkout main && git pull
 npm ci --ignore-scripts
 npm test                       # all green before you go further
 ```
