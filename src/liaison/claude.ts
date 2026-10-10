@@ -14,7 +14,15 @@ import { join, resolve } from 'node:path';
 import { CLAUDE_STANDING_RULE } from '../core/standing-rule.ts';
 import { isInside } from '../workspace/manager.ts';
 
-export const LIAISON_PERMISSION_MODE = 'default';
+/** The only permission modes the liaison may run in (security review
+ * must-fix 1). Never auto, never bypass. */
+export const LIAISON_MODES = ['default', 'acceptEdits'] as const;
+export type LiaisonMode = (typeof LIAISON_MODES)[number];
+
+function checkMode(mode: string): LiaisonMode {
+  if (!(LIAISON_MODES as readonly string[]).includes(mode)) throw new Error(`the liaison runs only in ${LIAISON_MODES.join(' or ')} mode`);
+  return mode as LiaisonMode;
+}
 
 /** Consequential Bash commands, denied at the one level nothing can override. */
 export const BASH_DENY = [
@@ -100,6 +108,9 @@ export const EDIT_DENY_PATHS = [
   '.git/config',
 ];
 
+/** Paths at the clone root that sandboxed Bash may not write. */
+export const CLONE_WRITE_DENY = ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.claude', '.mcp.json', '.envrc', '.codex', '.agents', '.vscode', '.github', 'Makefile', '.husky', '.git/hooks', '.git/config'];
+
 export interface LiaisonPaths {
   stateDir: string;
   /** Hub-owned CLAUDE_CONFIG_DIR for the liaison. */
@@ -155,7 +166,8 @@ export function otelEnv(endpoint: string): Record<string, string> {
 }
 
 /** The hub-owned settings file the liaison runs under. */
-export function liaisonSettings(p: LiaisonPaths): Record<string, unknown> {
+export function liaisonSettings(p: LiaisonPaths, mode: LiaisonMode = 'default'): Record<string, unknown> {
+  checkMode(mode);
   // The read denies cover the token files and socket only because they live
   // in the state directory; refuse any layout where they don't.
   for (const [name, path] of [['token file', p.tokenFile], ['hub socket', p.hubSocket], ['settings file', p.settingsFile]] as const) {
@@ -170,10 +182,16 @@ export function liaisonSettings(p: LiaisonPaths): Record<string, unknown> {
   const readDeny = [abs(p.stateDir), ...configSecrets, ...CREDENTIAL_DIRS, ...CREDENTIAL_FILES];
   return {
     permissions: {
-      defaultMode: LIAISON_PERMISSION_MODE,
+      defaultMode: mode,
       disableBypassPermissionsMode: 'disable',
       deny: [
         ...BASH_DENY.flatMap((c) => [`Bash(${c})`, `Bash(${c} *)`]),
+        // The security review's own patterns, kept verbatim alongside the
+        // per-command pairs above.
+        'Bash(git push*)',
+        'Bash(npm publish*)',
+        'Bash(curl*|*sh)',
+        'Bash(wget*|*sh)',
         'Bash(curl * | sh)',
         'Bash(curl * | bash)',
         'Bash(curl * | zsh)',
@@ -215,6 +233,10 @@ export function liaisonSettings(p: LiaisonPaths): Record<string, unknown> {
           abs(p.stateDir),
           abs(p.gitConfigPath),
           abs(p.settingsFile),
+          // Sandboxed Bash can write the clone, so the instruction files at
+          // its root are closed to it too, not only to the Edit tool. Deeper
+          // copies are the repo-file guard's job.
+          ...CLONE_WRITE_DENY.map((f) => join(abs(p.clone), f)),
         ],
       },
       network: {
@@ -245,12 +267,12 @@ function writeJson(path: string, value: unknown): void {
  * settings, so the file alone pins the mode), the standing rule as its
  * CLAUDE.md, and the channel registration plus pre-accepted trust for the
  * clone in its .claude.json. Never touches the maintainer's own ~/.claude*. */
-export function prepareConfigDir(p: LiaisonPaths): void {
+export function prepareConfigDir(p: LiaisonPaths, mode: LiaisonMode = 'default'): void {
   const home = resolve(p.home ?? homedir());
   const dir = abs(p.configDir);
   if (dir === join(home, '.claude') || dir === home) throw new Error('the liaison config folder must not be the maintainer’s own');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const settings = liaisonSettings(p);
+  const settings = liaisonSettings(p, mode);
   writeJson(p.settingsFile, settings);
   writeJson(join(dir, 'settings.json'), settings);
   writeFileSync(join(dir, 'CLAUDE.md'), `# Bridge liaison standing rule\n\n${CLAUDE_STANDING_RULE}\n`, { mode: 0o600 });
@@ -285,9 +307,10 @@ export interface LaunchSpec {
 /** The command line for the liaison. `pinModeFlag: false` leaves out
  * --permission-mode, for the gate test that proves the settings file alone
  * pins the mode. */
-export function liaisonCommand(p: LiaisonPaths, opts: { pinModeFlag?: boolean; claudeBin?: string } = {}): LaunchSpec {
+export function liaisonCommand(p: LiaisonPaths, opts: { pinModeFlag?: boolean; claudeBin?: string; mode?: LiaisonMode } = {}): LaunchSpec {
+  const mode = checkMode(opts.mode ?? 'default');
   const args = ['--dangerously-load-development-channels', 'server:bridge'];
-  if (opts.pinModeFlag !== false) args.push('--permission-mode', LIAISON_PERMISSION_MODE);
+  if (opts.pinModeFlag !== false) args.push('--permission-mode', mode);
   args.push('--settings', abs(p.settingsFile), '--append-system-prompt', CLAUDE_STANDING_RULE);
   return {
     command: opts.claudeBin ?? 'claude',

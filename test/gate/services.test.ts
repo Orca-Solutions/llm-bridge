@@ -158,7 +158,7 @@ test('gate: `repo add` records a baseline; an agent push touching CLAUDE.md befo
   assert.deepEqual(flags[0]!.hits.map((h) => h.rule), ['claude-md']);
   // The maintainer's own CLAUDE.md on main (in the baseline) is not flagged,
   // and a second scan adds nothing.
-  assert.equal(r.guard!.scan(), 0);
+  assert.equal(r.guard.scan(), 0);
   assert.ok(r.hub.store.auditEntries({ limit: 50 }).some((a) => a.action === 'guard.flag'));
 });
 

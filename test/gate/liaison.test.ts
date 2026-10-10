@@ -85,7 +85,9 @@ test('gate: deny rules cover push, gh, publish, deploy and cloud CLIs, piped ins
     assert.ok(deny.has(`Bash(${cmd})`), cmd);
     assert.ok(deny.has(`Bash(${cmd} *)`), `${cmd} *`);
   }
-  for (const r of ['Bash(curl * | sh)', 'Bash(curl * | bash)', 'Bash(wget * | sh)']) assert.ok(deny.has(r), r);
+  for (const r of ['Bash(curl * | sh)', 'Bash(curl * | bash)', 'Bash(wget * | sh)', 'Bash(git push*)', 'Bash(npm publish*)', 'Bash(curl*|*sh)', 'Bash(wget*|*sh)']) {
+    assert.ok(deny.has(r), r);
+  }
   for (const f of ['CLAUDE.md', '**/CLAUDE.md', '.claude/**', '**/.claude/**', '.mcp.json', '.envrc', 'AGENTS.md', '.codex/**', '.git/hooks/**', '.git/config']) {
     assert.ok(deny.has(`Edit(${f})`), f);
   }
@@ -110,7 +112,7 @@ test('gate: the state directory, token files, ~/.codex and credentials are read-
   assert.ok(fs.denyRead.includes('~/.codex'));
   assert.ok(fs.denyRead.includes(join(p.configDir, '.credentials.json')));
   assert.ok(p.tokenFile.startsWith(p.stateDir + '/') && p.hubSocket.startsWith(p.stateDir + '/'));
-  for (const w of [p.stateDir, p.configDir, p.gitConfigPath, p.settingsFile, join(p.bareRepo, 'hooks'), join(p.bareRepo, 'config')]) {
+  for (const w of [p.stateDir, p.configDir, p.gitConfigPath, p.settingsFile, join(p.bareRepo, 'hooks'), join(p.bareRepo, 'config'), join(p.clone, 'CLAUDE.md'), join(p.clone, '.claude'), join(p.clone, '.mcp.json'), join(p.clone, '.envrc'), join(p.clone, '.git/hooks')]) {
     assert.ok(fs.denyWrite.includes(w), w);
   }
   assert.deepEqual(fs.allowWrite, [p.bareRepo]);
@@ -155,6 +157,14 @@ test('gate: the command line pins the mode, loads only the bridge channel, and n
   assert.equal(spec.envExtra.CLAUDE_CONFIG_DIR, p.configDir);
   assert.equal(spec.envExtra.MCP_PROTOCOL_NEGOTIATION, 'legacy');
 
+  // acceptEdits is the one other mode allowed; anything else is refused.
+  const ae = liaisonCommand(p, { mode: 'acceptEdits' }).args;
+  assert.equal(ae[ae.indexOf('--permission-mode') + 1], 'acceptEdits');
+  assert.equal((liaisonSettings(p, 'acceptEdits') as Settings).permissions.defaultMode, 'acceptEdits');
+  for (const bad of ['auto', 'bypassPermissions', 'dontAsk', 'plan']) {
+    assert.throws(() => liaisonCommand(p, { mode: bad as never }), /only in default or acceptEdits/);
+    assert.throws(() => liaisonSettings(p, bad as never), /only in default or acceptEdits/);
+  }
   // The variant the gate uses to prove the settings file alone pins the mode.
   assert.ok(!liaisonCommand(p, { pinModeFlag: false }).args.includes('--permission-mode'));
 });

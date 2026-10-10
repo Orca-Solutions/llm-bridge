@@ -28,7 +28,7 @@ export interface RunningHub {
   console: ConsoleServer;
   config: HubConfig;
   supervisor: Supervisor;
-  guard: GuardScanner | null;
+  guard: GuardScanner;
   otlpPort: number;
   paths: { stateDir: string; socket: string; config: string; db: string; tokens: Record<string, string>; run: string };
   stop: () => Promise<void>;
@@ -91,16 +91,15 @@ export async function startHub(opts: StartOptions): Promise<RunningHub> {
     kills.add(k);
   });
 
-  // Repo-file guard over the bare repos, once they exist (`llm-bridge repo add`).
+  // Repo-file guard over the bare repos, once `llm-bridge repo add` made them.
   const wsPaths = workspacePaths(config.workspace);
-  let guard: GuardScanner | null = null;
-  if (existsSync(wsPaths.reposDir)) {
-    const ws = new WorkspaceManager({ reposDir: wsPaths.reposDir, clonesDir: wsPaths.clonesDir, gitConfigPath: wsPaths.gitConfigPath });
-    guard = new GuardScanner(hub, ws, join(opts.stateDir, 'guard-baseline'));
-    guard.start();
-  } else {
-    log(`  no bare repos yet at ${wsPaths.reposDir}; the repo-file guard starts with the next hub start after \`llm-bridge repo add\``);
-  }
+  const guard = new GuardScanner(
+    hub,
+    wsPaths.reposDir,
+    () => new WorkspaceManager({ reposDir: wsPaths.reposDir, clonesDir: wsPaths.clonesDir, gitConfigPath: wsPaths.gitConfigPath }),
+    join(opts.stateDir, 'guard-baseline'),
+  );
+  guard.start();
 
   // Claude-side spend (D13) from Claude Code's OTel cost metric.
   const otlp = new OtlpReceiver(hub, opts.otlpPort ?? config.otlp_port);
@@ -123,7 +122,7 @@ export async function startHub(opts: StartOptions): Promise<RunningHub> {
     paths: { stateDir: opts.stateDir, socket: socketPath, config: configPath, db: dbPath, tokens: tokenPaths, run: runDir },
     stop: async () => {
       watcher.stop();
-      guard?.stop();
+      guard.stop();
       await Promise.all([...kills]);
       supervisor.stopAll();
       await otlp.close();

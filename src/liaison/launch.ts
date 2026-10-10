@@ -15,7 +15,7 @@ import { loadConfig } from '../core/config.ts';
 import { checkVersions } from '../core/versions.ts';
 import { WorkspaceError, WorkspaceManager, isInside, workspacePaths } from '../workspace/manager.ts';
 import { agentEnv } from '../workspace/env.ts';
-import { liaisonCommand, prepareConfigDir, type LaunchSpec, type LiaisonPaths } from './claude.ts';
+import { liaisonCommand, prepareConfigDir, type LaunchSpec, type LiaisonMode, type LiaisonPaths } from './claude.ts';
 
 export const BIN = fileURLToPath(new URL('../../bin/llm-bridge.js', import.meta.url));
 export const SESSION_NAME = 'claude-liaison';
@@ -24,6 +24,7 @@ export interface ClaudeLaunchOptions {
   stateDir: string;
   clone?: string;
   pinModeFlag?: boolean;
+  mode?: LiaisonMode;
   claudeBin?: string;
 }
 
@@ -70,8 +71,8 @@ export function prepareClaudeLiaison(opts: ClaudeLaunchOptions): PreparedLaunch 
     channelCommand: { command: process.execPath, args: channelArgs },
     otlpEndpoint: `http://127.0.0.1:${config.otlp_port}`,
   };
-  prepareConfigDir(paths);
-  const spec = liaisonCommand(paths, { pinModeFlag: opts.pinModeFlag, claudeBin: opts.claudeBin });
+  prepareConfigDir(paths, opts.mode);
+  const spec = liaisonCommand(paths, { pinModeFlag: opts.pinModeFlag, claudeBin: opts.claudeBin, mode: opts.mode });
   const marker = randomBytes(16).toString('hex');
   const env = agentEnv(process.env, { gitConfigPath: wp.gitConfigPath, sessionMarker: marker, extra: spec.envExtra });
   return { paths, spec, env, marker, runFile: join(stateDir, 'run', `${SESSION_NAME}.json`) };

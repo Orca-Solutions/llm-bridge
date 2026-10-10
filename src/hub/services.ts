@@ -101,13 +101,19 @@ export class RunWatcher {
 
 export class GuardScanner {
   private readonly hub: Hub;
-  private readonly ws: WorkspaceManager;
+  private readonly reposDir: string;
+  private readonly makeWorkspace: () => WorkspaceManager;
+  private ws: WorkspaceManager | null = null;
   private readonly baselineDir: string;
   private timer: NodeJS.Timeout | null = null;
 
-  constructor(hub: Hub, ws: WorkspaceManager, baselineDir: string) {
+  /** The workspace is made only once its repos folder exists (after the
+   * first `llm-bridge repo add`), so a hub started before that needs no
+   * restart. */
+  constructor(hub: Hub, reposDir: string, makeWorkspace: () => WorkspaceManager, baselineDir: string) {
     this.hub = hub;
-    this.ws = ws;
+    this.reposDir = reposDir;
+    this.makeWorkspace = makeWorkspace;
     this.baselineDir = baselineDir;
   }
 
@@ -138,23 +144,28 @@ export class GuardScanner {
   }
 
   scan(): number {
+    if (!this.ws) {
+      if (!existsSync(this.reposDir)) return 0;
+      this.ws = this.makeWorkspace();
+    }
+    const ws = this.ws;
     let added = 0;
     const projects = [...this.hub.config.projects.claude, ...this.hub.config.projects.codex];
     for (const project of new Set(projects)) {
-      if (!existsSync(this.ws.barePath(project))) continue;
+      if (!existsSync(ws.barePath(project))) continue;
       try {
         let since = this.hub.store.guardRefs(project);
         if (since === null) {
           const base = this.baseline(project);
           if (base === null) {
             // No baseline from `repo add`: take the repo as it is now.
-            this.hub.store.setGuardRefs(project, this.ws.scanGuard(project, {}).seen);
+            this.hub.store.setGuardRefs(project, ws.scanGuard(project, {}).seen);
             this.hub.audit(HUB_ACTOR, 'guard.baseline', 'ok', null, null, null, { project, source: 'first_scan' });
             continue;
           }
           since = base;
         }
-        const report = this.ws.scanGuard(project, since);
+        const report = ws.scanGuard(project, since);
         added += this.hub.recordGuardFlags(report.flags);
         this.hub.store.setGuardRefs(project, report.seen);
       } catch (err) {
