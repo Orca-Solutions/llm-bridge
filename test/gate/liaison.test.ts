@@ -20,6 +20,7 @@ import { HubClient } from '../../src/hub/client.ts';
 import { META_KEYS } from '../../src/core/delivery.ts';
 import { CHANNEL_CAPABILITIES, CHANNEL_INSTRUCTIONS, checkDelivery } from '../../src/channel/server.ts';
 import { CLAUDE_STANDING_RULE } from '../../src/core/standing-rule.ts';
+import { CHECK_INBOX_MAX_WAIT_S } from '../../src/core/hub.ts';
 import { liaisonCommand, liaisonSettings, prepareConfigDir, type LiaisonPaths } from '../../src/liaison/claude.ts';
 import { prepareClaudeLiaison, runClaudeLiaison } from '../../src/liaison/launch.ts';
 import { WorkspaceManager, workspacePaths } from '../../src/workspace/manager.ts';
@@ -183,6 +184,8 @@ test('gate: the hub-owned config folder carries the standing rule and registers 
   const state = JSON.parse(readFileSync(join(p.configDir, '.claude.json'), 'utf8'));
   assert.deepEqual(Object.keys(state.mcpServers), ['bridge']);
   assert.equal(state.mcpServers.bridge.command, p.channelCommand.command);
+  // check_inbox can wait 45 s; the tool-call limit must outlast it.
+  assert.ok(state.mcpServers.bridge.timeout >= (CHECK_INBOX_MAX_WAIT_S + 30) * 1000);
   assert.deepEqual(state.oauthAccount, { emailAddress: 'x' });
   assert.deepEqual(Object.keys(state.projects), [p.clone]);
   for (const f of ['settings.json', 'CLAUDE.md', '.claude.json']) assert.equal(statSync(join(p.configDir, f)).mode & 0o777, 0o600, f);

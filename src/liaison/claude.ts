@@ -16,6 +16,9 @@ import { isInside } from '../workspace/manager.ts';
 
 /** The only permission modes the liaison may run in (security review
  * must-fix 1). Never auto, never bypass. */
+/** Claude Code's per-server tool-call limit for the bridge, in ms. */
+export const BRIDGE_TOOL_TIMEOUT_MS = 120_000;
+
 export const LIAISON_MODES = ['default', 'acceptEdits'] as const;
 export type LiaisonMode = (typeof LIAISON_MODES)[number];
 
@@ -288,8 +291,9 @@ export function prepareConfigDir(p: LiaisonPaths, mode: LiaisonMode = 'default')
       state = {};
     }
   }
-  // Only the bridge channel server; nothing else is registered here.
-  state.mcpServers = { bridge: { type: 'stdio', command: p.channelCommand.command, args: p.channelCommand.args, env: {} } };
+  // Only the bridge channel server; nothing else is registered here. Its
+  // timeout covers check_inbox's longest wait (45 s) with room to spare.
+  state.mcpServers = { bridge: { type: 'stdio', command: p.channelCommand.command, args: p.channelCommand.args, env: {}, timeout: BRIDGE_TOOL_TIMEOUT_MS } };
   const projects = (state.projects && typeof state.projects === 'object' ? state.projects : {}) as Record<string, Record<string, unknown>>;
   // Safe only because the clone is sparse (P21): no .claude/, no .mcp.json.
   projects[abs(p.clone)] = { ...(projects[abs(p.clone)] ?? {}), hasTrustDialogAccepted: true, enabledMcpjsonServers: [], disabledMcpjsonServers: [] };

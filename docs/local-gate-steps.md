@@ -53,6 +53,7 @@ node bin/llm-bridge.js liaison claude
 
 - The first time, Claude Code asks you to log in, because the liaison has its own config folder (`~/bridge/claude-liaison-config`) and never sees your personal one. Log in once with `/login`.
 - Claude Code asks you to confirm the development channel `server:bridge`. Confirm it. It asks every start; that's expected.
+- If it says no MCP server named `bridge` is configured instead, stop and paste the message to me. The bridge server is registered in the liaison's own `~/bridge/claude-liaison-config/.claude.json`; `CLAUDE_CONFIG_DIR=~/bridge/claude-liaison-config claude mcp get bridge` should list it as user config with a 120000 ms timeout. Whether the channel flag finds a server registered there is the one thing the vendor docs don't settle.
 - If Claude Code refuses to start and mentions the sandbox or env scrubbing, stop and paste the message to me. The settings fail closed on purpose.
 
 ## 2. Mode is pinned
