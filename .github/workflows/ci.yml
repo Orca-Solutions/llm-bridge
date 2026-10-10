@@ -25,6 +25,11 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
+      # Ubuntu runners block unprivileged user namespaces, which the Codex
+      # sandbox (bubblewrap) needs. Without this the sandbox refuses to start
+      # and the Codex sandbox gate test can't run. Affects only this runner;
+      # the maintainer approved it in the Phase 1 thread.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # The gate tests in test/gate/ are the Phase 1 done criteria; a failure
       # here blocks the change.
       - run: npm test
