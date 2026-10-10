@@ -1,0 +1,44 @@
+# CI for every push and pull request (build plan task 1).
+# It holds no secrets: no deploy or publish credentials exist until a release
+# process does. Install scripts never run (--ignore-scripts), actions are
+# pinned by commit, and the checkout keeps no token on disk.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      # The gate tests in test/gate/ are the Phase 1 done criteria; a failure
+      # here blocks the change.
+      - run: npm test
+
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.24'
+          cache: false
+      # Fails on any known vulnerability in the lockfile, and on a scan error.
+      - run: go run github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.5.1 scan source --lockfile=package-lock.json

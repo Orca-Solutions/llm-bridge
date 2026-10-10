@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM-Bridge console</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>LLM-Bridge</h1>
+  <div id="guards" class="guards"></div>
+  <div class="kill">
+    <button id="stop-claude" class="danger">Stop Claude side</button>
+    <button id="stop-codex" class="danger">Stop Codex side</button>
+    <button id="stop-all" class="danger">Stop everything</button>
+    <button id="resume-claude">Resume Claude side</button>
+    <button id="resume-codex">Resume Codex side</button>
+  </div>
+</header>
+<main>
+  <section class="list">
+    <h2>Questions for you</h2>
+    <ul id="questions"></ul>
+    <h2>Threads</h2>
+    <ul id="threads"></ul>
+    <h2>Repo guard flags</h2>
+    <p class="muted">Agent commits that touch instruction, CI or infrastructure files. Review the diff before you merge anything from that branch.</p>
+    <ul id="guard-flags"></ul>
+    <h2>New message</h2>
+    <form id="compose-new">
+      <label>To <select name="to"><option value="claude">Claude liaison</option><option value="codex">Codex liaison</option><option value="both">Both</option></select></label>
+      <label>Kind <select name="kind"><option>ask</option><option>task</option><option>review</option><option>status</option></select></label>
+      <textarea name="body" rows="4" placeholder="Opens a new thread"></textarea>
+      <button type="submit">Send</button>
+    </form>
+  </section>
+  <section class="detail">
+    <div id="empty" class="muted">Pick a thread.</div>
+    <div id="thread" hidden>
+      <div class="thread-head">
+        <h2 id="thread-title"></h2>
+        <div id="thread-state"></div>
+        <div class="controls">
+          <button id="unpark">Unpark</button>
+          <button id="pause">Pause</button>
+          <button id="stop" class="danger">Stop thread</button>
+        </div>
+      </div>
+      <ol id="timeline"></ol>
+      <p class="muted">Approvals: Claude-side actions are answered in the liaison's terminal. Codex runs with approval_policy=never in Phase 1, so nothing waits here.</p>
+      <form id="compose">
+        <label>To <select name="to"><option value="claude">Claude liaison</option><option value="codex">Codex liaison</option><option value="both">Both</option></select></label>
+        <label>Kind <select name="kind"><option>ask</option><option>task</option><option>review</option><option>status</option></select></label>
+        <textarea name="body" rows="3" placeholder="Your note steers the thread. It never approves anything."></textarea>
+        <button type="submit">Send</button>
+      </form>
+      <details><summary>Audit log for this thread</summary><ol id="audit"></ol></details>
+    </div>
+  </section>
+</main>
+<footer id="error" role="alert"></footer>
+</body>
+</html>
