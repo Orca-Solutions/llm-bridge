@@ -1,0 +1,26 @@
+{
+  "name": "llm-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local hub that lets a Claude Code liaison and a Codex liaison message each other, with the human as the only approver.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "bin": {
+    "llm-bridge": "bin/llm-bridge.js"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-reporter=spec \"test/**/*.test.ts\"",
+    "test:gate": "node --disable-warning=ExperimentalWarning --test --test-reporter=spec \"test/gate/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.0",
+    "typescript": "5.9.3"
+  }
+}
