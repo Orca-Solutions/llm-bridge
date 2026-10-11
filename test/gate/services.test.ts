@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,7 +41,7 @@ async function boot(t: { after: (fn: () => unknown) => void }, root: string): Pr
 }
 
 function tmp(t: { after: (fn: () => void) => void }): string {
-  const root = mkdtempSync(join(tmpdir(), 'llmb-svc-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'llmb-svc-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -64,7 +64,9 @@ test('run files are validated, and one naming a process without its marker is re
   const root = tmp(t);
   const r = await boot(t, root);
   // A process the file points at, but which doesn't carry the marker.
-  const victim = spawn('sleep', ['30'], { stdio: 'ignore' });
+  // node rather than sleep: macOS hides the environment of Apple's own
+  // binaries from ps, so a marked sleep would look unmarked there.
+  const victim = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], { stdio: 'ignore' });
   t.after(() => victim.kill('SIGKILL'));
   writeFileSync(join(r.paths.run, 'claude-liaison.json'), JSON.stringify({ name: 'claude-liaison', side: 'claude', pid: victim.pid, marker: 'b'.repeat(32) }));
   // A file naming a session on the wrong side.
@@ -79,7 +81,7 @@ test('run files are validated, and one naming a process without its marker is re
   // The same process started with the marker is tracked and killed.
   const marker = 'd'.repeat(32);
   const env = agentEnv(process.env, { gitConfigPath: '/dev/null', sessionMarker: marker });
-  const marked = spawn('sleep', ['30'], { stdio: 'ignore', env });
+  const marked = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], { stdio: 'ignore', env });
   t.after(() => marked.kill('SIGKILL'));
   r.hub.resumeSide('claude');
   writeFileSync(join(r.paths.run, 'claude-liaison.json'), JSON.stringify({ name: 'claude-liaison', side: 'claude', pid: marked.pid, marker }));
