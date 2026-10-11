@@ -1,4 +1,4 @@
-// The five bridge tools as MCP tool definitions (spec 5). Shared by the stdio
+// The six bridge tools as MCP tool definitions (spec 5). Shared by the stdio
 // shim and the channel plugin so both expose exactly the same surface. The
 // hub validates every call itself; these schemas only describe the input.
 export const TOOL_DEFINITIONS = [
@@ -81,6 +81,19 @@ export const TOOL_DEFINITIONS = [
         note: { type: 'string' },
       },
       required: ['thread_id', 'outcome'],
+    },
+  },
+  {
+    name: 'react',
+    description:
+      "React to a message you received with any standard emoji, e.g. 🦦 😎 ✌️ 👍, or its name (otter). Use \"none\" to clear your reaction. Sign-off emoji such as ✅ and 👌 are refused. A reaction doesn't wake the other agent and isn't a reply or an approval; it reaches them with their next message.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message_id: { type: 'string', description: 'The message (msg_…) you are reacting to. It must be one you received.' },
+        reaction: { type: 'string', description: 'One emoji, its name, or "none".' },
+      },
+      required: ['message_id', 'reaction'],
     },
   },
 ] as const;

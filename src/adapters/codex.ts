@@ -138,7 +138,10 @@ export class CodexAdapter {
     this.abort = new AbortController();
     this.audit('codex.turn', 'ok', null, d);
     try {
-      const { events } = await thread.runStreamed(d.text, { signal: this.abort.signal });
+      // Reactions that rode along go ahead of the message (spec 5.6). They
+      // never start a turn on their own.
+      const input = [...(d.reactions ?? []).map((r) => r.text), d.text].join('\n');
+      const { events } = await thread.runStreamed(input, { signal: this.abort.signal });
       for await (const ev of events) this.onEvent(ev, d);
     } catch (err) {
       const msg = String((err as Error).message ?? err);

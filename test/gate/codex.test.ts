@@ -27,7 +27,7 @@ import { findCodexBinary } from '../../src/liaison/codex-bin.ts';
 import { CODEX_BRANCH, GUARD_BIN, turnCost } from '../../src/adapters/codex.ts';
 import { CODEX_STANDING_RULE } from '../../src/core/standing-rule.ts';
 import { startHub, type RunningHub } from '../../src/hub/main.ts';
-import { HubClient } from '../../src/hub/client.ts';
+import { HubClient, readTokenFile } from '../../src/hub/client.ts';
 import { WorkspaceManager, workspacePaths } from '../../src/workspace/manager.ts';
 import { SESSION_MARKER_VAR } from '../../src/workspace/env.ts';
 import { pidsWithMarker } from '../../src/supervisor/proc.ts';
@@ -416,4 +416,28 @@ test('gate: Stop on the Codex side kills the running turn and anything it left b
 
   r.hub.resumeSide('codex');
   await until(() => r.hub.store.auditEntries({ limit: 50 }).filter((a) => a.action === 'codex.start').length >= 2);
+});
+
+test('gate: a reaction from Claude reaches Codex ahead of the next message, in the same turn, and starts no turn of its own', async (t) => {
+  const root = tmp(t);
+  const { bin, log } = fakeCodex(root);
+  const r = await bootWithCodex(t, root, bin);
+  const claude = new HubClient({ socketPath: r.paths.socket, tokenFile: r.paths.tokens['claude-liaison']! });
+  await claude.connect();
+  t.after(() => claude.close());
+  // A message from the Codex liaison to Claude, as Codex would send through its shim.
+  const codexToken = readTokenFile(r.paths.tokens['codex-liaison']!);
+  const fromCodex = (await r.hub.call(codexToken, 'send_message', { to: 'claude', kind: 'ask', body: 'Shall I add the cache?' })) as { message_id: string; thread_id: string };
+  await claude.call('check_inbox', { wait_seconds: 0 });
+  await claude.call('react', { message_id: fromCodex.message_id, reaction: '🦦' });
+  await new Promise((res) => setTimeout(res, 300));
+  assert.ok(!existsSync(log), 'no Codex turn for a reaction alone');
+
+  const replied = (await claude.call('send_message', { to: 'codex', thread_id: fromCodex.thread_id, kind: 'reply', in_reply_to: fromCodex.message_id, body: 'Yes, behind a flag.' })) as { message_id: string };
+  await until(() => existsSync(log) && r.hub.store.getMessage(replied.message_id)!.status === 'delivered');
+  const runs = readFileSync(log, 'utf8').trim().split('\n');
+  assert.equal(runs.length, 1, 'one turn for the message and its reaction');
+  const run = JSON.parse(runs[0]!) as { input: string };
+  assert.match(run.input, /^<bridge-reaction from_agent="claude" from_session="liaison" provenance="claude-adapter" .* event="reaction" reacted_to="msg_[0-9A-Z]{26}" reaction="otter" \/>\n<bridge-message /);
+  assert.ok(CODEX_DEVELOPER_INSTRUCTIONS.includes('react'), 'Codex is told it can react');
 });

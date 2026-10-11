@@ -4,9 +4,11 @@
 // escaped strings inside.
 import { escapeForModel } from './escape.ts';
 import { META_VALUE } from './config.ts';
-import type { Ref, Side, StoredMessage, Thread } from './types.ts';
+import type { Reaction, Ref, Side, StoredMessage, Thread } from './types.ts';
 
-/** The fixed meta-key allowlist from spec 6.1, in output order. */
+/** The fixed meta-key allowlist from spec 6.1, in output order. `event` is
+ * on every wrapper (`message` or `reaction`); `reacted_to` and `reaction`
+ * only on reactions (5.6). */
 export const META_KEYS = [
   'from_agent',
   'from_session',
@@ -21,6 +23,9 @@ export const META_KEYS = [
   'turn',
   'expects_reply',
   'in_reply_to',
+  'event',
+  'reacted_to',
+  'reaction',
 ] as const;
 
 export type Meta = Partial<Record<(typeof META_KEYS)[number], string>>;
@@ -32,6 +37,17 @@ export interface Delivery {
   meta: Meta;
   content: string;
   /** The full wrapped form, exactly as the session sees it. */
+  text: string;
+  /** Pending reactions for the same session that ride along with this
+   * delivery (spec 5.6). They are shown before the message. */
+  reactions?: ReactionDelivery[];
+}
+
+export interface ReactionDelivery {
+  reaction_id: string;
+  thread_id: string;
+  meta: Meta;
+  content: string;
   text: string;
 }
 
@@ -70,13 +86,18 @@ export function buildMeta(m: StoredMessage, thread: Thread): Meta {
     expects_reply: m.expects_reply ? 'true' : 'false',
   };
   if (m.in_reply_to) meta.in_reply_to = m.in_reply_to;
+  meta.event = 'message';
+  checkMeta(meta);
+  return meta;
+}
+
+function checkMeta(meta: Meta): void {
   for (const [k, v] of Object.entries(meta)) {
     // A value outside the pattern is a hub bug: fail closed.
     if (!(META_KEYS as readonly string[]).includes(k) || !META_VALUE.test(v)) {
       throw new WrapperError(`meta value for ${k} fails the allowlist`);
     }
   }
-  return meta;
 }
 
 export function buildContent(m: StoredMessage): string {
@@ -101,4 +122,24 @@ export function renderDelivery(m: StoredMessage, thread: Thread, recipientSide: 
   const meta = buildMeta(m, thread);
   const content = buildContent(m);
   return { message_id: m.id, thread_id: m.thread_id, meta, content, text: wrap(recipientSide, meta, content) };
+}
+
+/** The delivered form of a reaction (spec 5.6). Every value is hub-set or a
+ * name from the hub's emoji table; nothing the reacting agent wrote is in it. */
+export function renderReaction(r: Reaction, thread: Thread, recipientSide: Side): ReactionDelivery {
+  const meta: Meta = {
+    from_agent: r.from_agent,
+    from_session: r.from_session,
+    provenance: r.principal,
+    project_claude: projectFor(thread, 'claude'),
+    project_codex: projectFor(thread, 'codex'),
+    thread_id: r.thread_id,
+    event: 'reaction',
+    reacted_to: r.message_id,
+    reaction: r.reaction,
+  };
+  checkMeta(meta);
+  const content = r.reaction === 'none' ? `reaction cleared on ${r.message_id}` : `reacted ${r.reaction} to ${r.message_id}`;
+  const text = recipientSide === 'claude' ? wrap('claude', meta, content) : `<bridge-reaction ${attrs(meta)} />`;
+  return { reaction_id: r.id, thread_id: r.thread_id, meta, content, text };
 }

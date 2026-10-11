@@ -268,6 +268,8 @@ export class ConsoleServer {
         thread: { ...d.thread, close_note: d.thread.close_note === null ? null : visibleForConsole(d.thread.close_note) },
         participants: d.participants,
         messages: d.messages.map(visibleMessage),
+        // Every field is hub-set or from the hub's emoji table (spec 5.6).
+        reactions: d.reactions,
         questions: d.questions.map((q) => ({ ...q, question: visibleForConsole(q.question), options: q.options.map(visibleForConsole) })),
         approvals: d.approvals,
         // Claude-side actions are approved at the liaison's own terminal; the

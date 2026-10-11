@@ -4,6 +4,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type {
   ApprovalRecord,
+  Reaction,
   MessageStatus,
   ParkReason,
   Question,
@@ -73,6 +74,24 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_inbox ON messages (to_name, status, seq);
 CREATE INDEX IF NOT EXISTS messages_thread ON messages (thread_id, seq);
 CREATE INDEX IF NOT EXISTS messages_time ON messages (created_ms);
+
+-- Reactions (spec 5.6) are not messages. One row per sender per message;
+-- a new reaction replaces the old one and is delivered again.
+CREATE TABLE IF NOT EXISTS reactions (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL REFERENCES threads(id),
+  message_id TEXT NOT NULL REFERENCES messages(id),
+  from_agent TEXT NOT NULL,
+  from_session TEXT NOT NULL,
+  from_name TEXT NOT NULL,
+  principal TEXT NOT NULL,
+  to_name TEXT NOT NULL,
+  reaction TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  delivered_at TEXT,
+  UNIQUE (from_name, message_id)
+);
+CREATE INDEX IF NOT EXISTS reactions_pending ON reactions (to_name, delivered_at, created_at);
 
 CREATE TABLE IF NOT EXISTS questions (
   id TEXT PRIMARY KEY,
@@ -200,6 +219,22 @@ function toThread(row: Row): Thread {
     closed_by: (row.closed_by as string | null) ?? null,
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
+  };
+}
+
+function toReaction(row: Row): Reaction {
+  return {
+    id: row.id as string,
+    thread_id: row.thread_id as string,
+    message_id: row.message_id as string,
+    from_agent: row.from_agent as Side,
+    from_session: row.from_session as Reaction['from_session'],
+    from_name: row.from_name as string,
+    principal: row.principal as Reaction['principal'],
+    to_name: row.to_name as string,
+    reaction: row.reaction as string,
+    created_at: row.created_at as string,
+    delivered_at: (row.delivered_at as string | null) ?? null,
   };
 }
 
@@ -383,6 +418,60 @@ export class Store {
       args.push(filter.fromSide, filter.project);
     }
     const row = this.db.prepare(sql).get(...args) as Row;
+    return Number(row.n);
+  }
+
+  // ---- reactions ----
+
+  getReaction(fromName: string, messageId: string): Reaction | null {
+    const row = this.db.prepare('SELECT * FROM reactions WHERE from_name = ? AND message_id = ?').get(fromName, messageId) as Row | undefined;
+    return row ? toReaction(row) : null;
+  }
+
+  /** Insert or replace the sender's reaction on a message. A replaced
+   * reaction is undelivered again, so the new one goes out. */
+  upsertReaction(r: Reaction): void {
+    this.db
+      .prepare(
+        `INSERT INTO reactions (id, thread_id, message_id, from_agent, from_session, from_name, principal, to_name, reaction, created_at, delivered_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+         ON CONFLICT (from_name, message_id) DO UPDATE SET id = excluded.id, reaction = excluded.reaction,
+           created_at = excluded.created_at, delivered_at = NULL`,
+      )
+      .run(r.id, r.thread_id, r.message_id, r.from_agent, r.from_session, r.from_name, r.principal, r.to_name, r.reaction, r.created_at);
+  }
+
+  deleteReaction(fromName: string, messageId: string): void {
+    this.db.prepare('DELETE FROM reactions WHERE from_name = ? AND message_id = ?').run(fromName, messageId);
+  }
+
+  /** Undelivered reactions for a session on open threads, oldest first. */
+  pendingReactionsFor(sessionName: string, limit: number): Reaction[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT r.* FROM reactions r JOIN threads t ON t.id = r.thread_id
+           WHERE r.to_name = ? AND r.delivered_at IS NULL AND t.state = 'open'
+           ORDER BY r.created_at, r.id LIMIT ?`,
+        )
+        .all(sessionName, limit) as Row[]
+    ).map(toReaction);
+  }
+
+  markReactionDelivered(id: string, at: string): void {
+    this.db.prepare('UPDATE reactions SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL').run(at, id);
+  }
+
+  reactionsOn(threadId: string): Reaction[] {
+    return (this.db.prepare('SELECT * FROM reactions WHERE thread_id = ? ORDER BY created_at, id').all(threadId) as Row[]).map(toReaction);
+  }
+
+  /** Accepted react calls by a principal since a time, from the audit log
+   * (rows are replaced, so they can't be counted from the table). */
+  countReactionsSince(principal: string, sinceIso: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'react' AND outcome = 'ok' AND principal = ? AND at >= ?")
+      .get(principal, sinceIso) as Row;
     return Number(row.n);
   }
 

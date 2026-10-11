@@ -7,8 +7,9 @@
 import { EventEmitter } from 'node:events';
 import { assertWellFormed, escapeForModel } from './escape.ts';
 import { scanSecrets } from './secrets.ts';
-import { renderDelivery, type Delivery } from './delivery.ts';
-import { ID_PATTERNS, newMessageId, newQuestionId, newThreadId } from './ids.ts';
+import { renderDelivery, renderReaction, type Delivery, type ReactionDelivery } from './delivery.ts';
+import { ID_PATTERNS, newMessageId, newQuestionId, newReactionId, newThreadId } from './ids.ts';
+import { emojiFor, lookupReaction, REACTION_NONE } from './reactions.ts';
 import type { HubConfig } from './config.ts';
 import type { Store } from './store.ts';
 import type { TokenRegistry } from './auth.ts';
@@ -20,6 +21,7 @@ import {
   type OpenedBy,
   type ParkReason,
   type Principal,
+  type Reaction,
   type Ref,
   type SessionInfo,
   type Side,
@@ -32,6 +34,8 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 export const CHECK_INBOX_MAX_WAIT_S = 45;
 export const CHECK_INBOX_MAX_MESSAGES = 20;
+/** At most this many pending reactions ride along with one delivery. */
+export const REACTIONS_PER_DELIVERY = 20;
 
 /** Fields the hub stamps. A sender that supplies any of them is refused. */
 const HUB_FIELDS = new Set([
@@ -61,8 +65,8 @@ const SEND_FIELDS = new Set([
   'bind_project',
 ]);
 
-export type BridgeTool = 'send_message' | 'check_inbox' | 'get_thread' | 'ask_human' | 'close_thread';
-export const BRIDGE_TOOLS: readonly BridgeTool[] = ['send_message', 'check_inbox', 'get_thread', 'ask_human', 'close_thread'];
+export type BridgeTool = 'send_message' | 'check_inbox' | 'get_thread' | 'ask_human' | 'close_thread' | 'react';
+export const BRIDGE_TOOLS: readonly BridgeTool[] = ['send_message', 'check_inbox', 'get_thread', 'ask_human', 'close_thread', 'react'];
 
 interface Actor {
   /** A Principal, or `hub` for the hub's own actions, or `unauthenticated`. */
@@ -201,7 +205,7 @@ export class Hub extends EventEmitter {
     }
     const actor: Actor = { principal: session.principal, name: session.name };
     if (typeof method !== 'string' || !(BRIDGE_TOOLS as readonly string[]).includes(method)) {
-      // Adapter tokens can call only the five bridge tools; anything else is 401.
+      // Adapter tokens can call only the bridge tools; anything else is 401.
       this.audit(actor, 'call.unknown', 'refused', 'unauthenticated', null, null);
       throw Errors.unauthenticated();
     }
@@ -217,6 +221,8 @@ export class Hub extends EventEmitter {
           return this.askHuman(session, params);
         case 'close_thread':
           return this.closeThread(session, params);
+        case 'react':
+          return this.react(session, params);
       }
     } catch (err) {
       if (err instanceof BridgeError) {
@@ -531,6 +537,8 @@ export class Hub extends EventEmitter {
       let delivery: Delivery;
       try {
         delivery = renderDelivery(m, thread, this.recipientSide(m));
+        const reactions = this.pendingReactions(m.to_name, this.recipientSide(m));
+        if (reactions.length > 0) delivery.reactions = reactions;
       } catch {
         // Fail closed: nothing delivered, logged.
         this.audit(HUB, 'deliver', 'error', 'wrapper_failed', m.thread_id, m.id);
@@ -546,6 +554,7 @@ export class Hub extends EventEmitter {
       if (ok && again && again.status === 'queued') {
         this.store.setMessageStatus(m.id, 'delivered', this.iso());
         this.audit(HUB, 'deliver', 'ok', null, m.thread_id, m.id, { to: m.to_name, path: 'push' });
+        this.markReactionsDelivered(delivery.reactions ?? [], m.to_name, 'push');
       }
       return;
     }
@@ -593,7 +602,12 @@ export class Hub extends EventEmitter {
         path: 'check_inbox',
       });
     }
+    // Pending reactions come with every check_inbox answer; they never end
+    // the wait on their own (spec 5.6).
+    const reactions = this.pendingReactions(session.name, session.side);
+    this.markReactionsDelivered(reactions, session.name, 'check_inbox');
     return {
+      ...(reactions.length > 0 ? { reactions: reactions.map((r) => ({ reaction_id: r.reaction_id, thread_id: r.thread_id, text: r.text })) } : {}),
       messages: out.map((d) => ({ message_id: d.message_id, thread_id: d.thread_id, text: d.text })),
       more: this.store.countQueuedFor(session.name) > 0,
     };
@@ -625,6 +639,11 @@ export class Hub extends EventEmitter {
         const d = renderDelivery(m, thread, session.side);
         return { message_id: d.message_id, text: d.text };
       });
+    // Reactions on the caller's own messages and the caller's own reactions.
+    const reactions = this.store
+      .reactionsOn(thread.id)
+      .filter((r) => r.to_name === session.name || r.from_name === session.name)
+      .map((r) => ({ reaction_id: r.id, text: renderReaction(r, thread, session.side).text }));
     const questions = this.store.questionsOn(thread.id).map((q) => ({
       question_id: q.id,
       question: escapeForModel(q.question),
@@ -644,6 +663,7 @@ export class Hub extends EventEmitter {
         close_note: thread.close_note === null ? null : escapeForModel(thread.close_note),
       },
       messages,
+      reactions,
       questions,
       // Read-only. No tool writes these (spec 5.3, 8).
       approvals: this.store.approvalsOn(thread.id).map((a) => ({
@@ -656,6 +676,83 @@ export class Hub extends EventEmitter {
         decided_at: a.decided_at,
       })),
     };
+  }
+
+  // ------------------------------------------------------------------ react
+
+  /** React to a message the caller received (spec 5.6). A reaction is not a
+   * message: no turn, no hop, no wake, and it never unparks a thread or
+   * resets hops. It goes only to the session that sent the message. */
+  private react(session: SessionInfo, params: unknown): unknown {
+    if (!isPlainObject(params)) throw Errors.invalidInput('arguments must be an object');
+    for (const k of Object.keys(params)) {
+      if (HUB_FIELDS.has(k)) throw Errors.fieldNotAllowed(k);
+      if (k !== 'message_id' && k !== 'reaction') throw Errors.unknownField(k.slice(0, 64));
+    }
+    // P25: a malformed id, a message the caller didn't receive, or one on a
+    // thread it isn't on all get the same answer.
+    const id = params.message_id;
+    if (typeof id !== 'string' || !ID_PATTERNS.message.test(id)) throw Errors.notAParticipant();
+    const m = this.store.getMessage(id);
+    if (!m || m.to_name !== session.name || m.status !== 'delivered' || !this.store.isParticipant(m.thread_id, session.name)) {
+      throw Errors.notAParticipant();
+    }
+    const thread = this.store.getThread(m.thread_id)!;
+    if (thread.state === 'closed' || thread.state === 'cancelled') throw Errors.threadClosed();
+
+    const actor: Actor = { principal: session.principal, name: session.name };
+    const entry = lookupReaction(params.reaction);
+    if (!entry) {
+      // Kept for the log as code points only, so the rejected text is inert
+      // wherever the log is read. Never delivered to a model.
+      this.audit(actor, 'react.rejected', 'refused', 'invalid_reaction', thread.id, m.id, { input: codePoints(params.reaction) });
+      throw Errors.invalidReaction();
+    }
+    if (this.store.countReactionsSince(session.principal, this.iso(this.now() - HOUR_MS)) >= this.config.limits.reactions_per_hour) {
+      throw Errors.limitReactions();
+    }
+    const name = entry === REACTION_NONE ? REACTION_NONE : entry.name;
+    return this.store.tx(() => {
+      const existing = this.store.getReaction(session.name, m.id);
+      if (name === REACTION_NONE && (!existing || existing.reaction === REACTION_NONE)) {
+        this.audit(actor, 'react', 'ok', null, thread.id, m.id, { reaction: name });
+        return { reaction_id: existing?.id ?? null, state: 'cleared' };
+      }
+      const r: Reaction = {
+        id: newReactionId(),
+        thread_id: thread.id,
+        message_id: m.id,
+        from_agent: session.side,
+        from_session: session.role,
+        from_name: session.name,
+        principal: session.principal,
+        to_name: m.from_name,
+        reaction: name,
+        created_at: this.iso(),
+        delivered_at: null,
+      };
+      this.store.upsertReaction(r);
+      this.audit(actor, 'react', 'ok', null, thread.id, m.id, { reaction: name, to: r.to_name });
+      return { reaction_id: r.id, state: name === REACTION_NONE ? 'cleared' : 'stored' };
+    });
+  }
+
+  /** Undelivered reactions for a session, rendered for its side, oldest
+   * first and at most REACTIONS_PER_DELIVERY. */
+  private pendingReactions(sessionName: string, side: Side): ReactionDelivery[] {
+    const out: ReactionDelivery[] = [];
+    for (const r of this.store.pendingReactionsFor(sessionName, REACTIONS_PER_DELIVERY)) {
+      const thread = this.store.getThread(r.thread_id);
+      if (thread) out.push(renderReaction(r, thread, side));
+    }
+    return out;
+  }
+
+  private markReactionsDelivered(reactions: ReactionDelivery[], to: string, path: string): void {
+    for (const r of reactions) {
+      this.store.markReactionDelivered(r.reaction_id, this.iso());
+      this.audit(HUB, 'deliver.reaction', 'ok', null, r.thread_id, null, { reaction_id: r.reaction_id, to, path });
+    }
   }
 
   // -------------------------------------------------------------- ask_human
@@ -950,6 +1047,7 @@ export class Hub extends EventEmitter {
       thread: t,
       participants: this.store.participants(t.id),
       messages: this.store.threadMessages(t.id),
+      reactions: this.store.reactionsOn(t.id).map((r) => ({ ...r, emoji: emojiFor(r.reaction) })),
       questions: this.store.questionsOn(t.id),
       approvals: this.store.approvalsOn(t.id),
       audit: this.store.auditEntries({ thread_id: t.id, limit: 200 }),
@@ -976,6 +1074,13 @@ function threadIdOf(params: unknown): string | null {
     return params.thread_id;
   }
   return null;
+}
+
+/** A rejected reaction input as `U+XXXX` code points, at most 32 of them. */
+function codePoints(v: unknown): string {
+  if (typeof v !== 'string') return `(${v === null ? 'null' : typeof v})`;
+  const cps = [...v].slice(0, 32).map((c) => 'U+' + c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0'));
+  return cps.join(' ') + ([...v].length > 32 ? ' …' : '');
 }
 
 function redactRef(r: Ref): Ref {

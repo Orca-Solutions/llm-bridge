@@ -19,6 +19,7 @@ export interface Limits {
   threads_per_day: number;
   concurrent_threads: number;
   body_bytes: number;
+  reactions_per_hour: number;
 }
 
 export const DEFAULT_LIMITS: Limits = {
@@ -31,6 +32,7 @@ export const DEFAULT_LIMITS: Limits = {
   threads_per_day: 20,
   concurrent_threads: 5,
   body_bytes: 64 * 1024,
+  reactions_per_hour: 60,
 };
 
 export interface HubConfig {
