@@ -80,6 +80,10 @@ test('gate: liaison permission mode is default; auto and bypass are disabled; no
   assert.deepEqual([...s.permissions.allow].sort(), ['mcp__bridge__ask_human', 'mcp__bridge__check_inbox', 'mcp__bridge__close_thread', 'mcp__bridge__get_thread']);
   assert.equal(s.disableAllHooks, true);
   assert.equal(s.enableAllProjectMcpServers, false);
+  // Nothing from the maintainer's claude.ai account: no connectors, no skills.
+  assert.equal(s.disableClaudeAiConnectors, true);
+  assert.equal(s.syncClaudeAiSkills, false);
+  assert.equal(s.env.ENABLE_CLAUDEAI_MCP_SERVERS, 'false');
 });
 
 test('gate: deny rules cover push, gh, publish, deploy and cloud CLIs, piped installs, instruction files, and cross-session tools', (t) => {
@@ -159,6 +163,7 @@ test('gate: the command line pins the mode, loads only the bridge channel, and n
   }
   assert.equal(spec.envExtra.CLAUDE_CONFIG_DIR, p.configDir);
   assert.equal(spec.envExtra.MCP_PROTOCOL_NEGOTIATION, 'legacy');
+  assert.equal(spec.envExtra.ENABLE_CLAUDEAI_MCP_SERVERS, 'false');
 
   // acceptEdits is the one other mode allowed; anything else is refused.
   const ae = liaisonCommand(p, { mode: 'acceptEdits' }).args;
@@ -376,7 +381,7 @@ test('gate: the launcher runs Claude Code in a fresh sparse clone with the scrub
   assert.equal(rec.env.CLAUDE_CONFIG_DIR, wp.claudeConfigDir);
   assert.equal(rec.env.GIT_CONFIG_GLOBAL, wp.gitConfigPath);
   assert.ok(!('GITHUB_TOKEN' in rec.env) && !('SSH_AUTH_SOCK' in rec.env));
-  const allowed = new Set<string>([...PASS_THROUGH, 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_TERMINAL_PROMPT', SESSION_MARKER_VAR, 'CLAUDE_CONFIG_DIR', 'MCP_PROTOCOL_NEGOTIATION', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB']);
+  const allowed = new Set<string>([...PASS_THROUGH, 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_TERMINAL_PROMPT', SESSION_MARKER_VAR, 'CLAUDE_CONFIG_DIR', 'MCP_PROTOCOL_NEGOTIATION', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'ENABLE_CLAUDEAI_MCP_SERVERS']);
   // macOS adds __CF_USER_TEXT_ENCODING to every process it starts, even one
   // started with an empty environment, so the launcher can't remove it. It
   // holds only the user id and text encoding; nothing else may ride in it.
