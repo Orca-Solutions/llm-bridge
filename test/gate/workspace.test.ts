@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GUARDED_PATTERNS, WorkspaceError, WorkspaceManager, forbiddenFiles, guardedHits } from '../../src/workspace/manager.ts';
@@ -30,7 +30,7 @@ function makeSource(root: string, files: Record<string, string>): string {
 }
 
 function setup(t: { after: (fn: () => void) => void }, files: Record<string, string> = { 'README.md': 'hi\n', 'src/app.ts': 'x\n' }) {
-  const root = mkdtempSync(join(tmpdir(), 'llmb-ws-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'llmb-ws-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const src = makeSource(root, files);
   const ws = new WorkspaceManager({

@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,8 +44,10 @@ function paths(root: string): LiaisonPaths {
   };
 }
 
+// macOS keeps temp folders behind a symlink (/var is /private/var), and a
+// child's cwd comes back as the real path, so tests work in the real path.
 function tmp(t: { after: (fn: () => void) => void }, prefix = 'llmb-liaison-'): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -328,7 +330,9 @@ function fakeClaude(root: string): { bin: string; record: string } {
     `#!${process.execPath}
 const { spawn } = require('node:child_process');
 require('node:fs').writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), env: process.env, pid: process.pid }));
-const c = spawn('sh', ['-c', 'nohup sleep 300 >/dev/null 2>&1 &'], { detached: true, stdio: 'ignore' });
+// The grandchild is node, not sleep: macOS hides the environment of Apple's
+// own binaries from ps, so the marker scan can only be checked on others.
+const c = spawn('sh', ['-c', 'nohup "$0" -e "setInterval(() => {}, 1000)" >/dev/null 2>&1 &', process.execPath], { detached: true, stdio: 'ignore' });
 c.unref();
 setInterval(() => {}, 1000);
 `,
@@ -353,6 +357,17 @@ test('gate: the launcher runs Claude Code in a fresh sparse clone with the scrub
   const done = runClaudeLiaison({ stateDir: r.paths.stateDir, claudeBin: bin });
   await until(() => existsSync(record), 10_000);
   const rec = JSON.parse(readFileSync(record, 'utf8')) as { argv: string[]; cwd: string; env: Record<string, string>; pid: number };
+  // If an assertion fails before Stop, don't leave the stand-in running.
+  t.after(async () => {
+    const { pidsWithMarker } = await import('../../src/supervisor/proc.ts');
+    for (const pid of [rec.pid, ...pidsWithMarker(rec.env[SESSION_MARKER_VAR]!)]) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  });
 
   assert.ok(rec.cwd.startsWith(join(wp.clonesDir, 'claude') + '/'));
   assert.ok(!existsSync(join(rec.cwd, '.claude')), 'sparse clone leaves out .claude/');
@@ -371,7 +386,7 @@ test('gate: the launcher runs Claude Code in a fresh sparse clone with the scrub
   await until(() => r.supervisor.tracked().some((s) => s.name === 'claude-liaison'), 5000);
   const marker = rec.env[SESSION_MARKER_VAR]!;
   const { pidsWithMarker } = await import('../../src/supervisor/proc.ts');
-  await until(() => pidsWithMarker(marker).length >= 2, 5000); // fake claude + its nohup sleep
+  await until(() => pidsWithMarker(marker).length >= 2, 5000); // fake claude + its nohup'd grandchild
   r.hub.stopSide('claude');
   const code = await done;
   assert.notEqual(code, 0);

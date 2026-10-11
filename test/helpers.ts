@@ -1,7 +1,7 @@
 // Test fixtures: a hub in a throwaway state directory with the Phase 1
 // sessions' tokens issued. Tokens are read back from their 0600 files the
 // same way the shim and the channel plugin read them.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/core/store.ts';
@@ -30,7 +30,7 @@ export function baseConfig(overrides: Record<string, unknown> = {}): HubConfig {
 }
 
 export function makeHub(overrides: Record<string, unknown> = {}): Fixture {
-  const dir = mkdtempSync(join(tmpdir(), 'llmb-test-'));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'llmb-test-')));
   const store = new Store(join(dir, 'bridge.db'));
   const tokens = new TokenRegistry(dir);
   const clock = { now: Date.parse('2026-10-10T12:00:00Z') };

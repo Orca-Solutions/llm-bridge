@@ -4,7 +4,7 @@
 // through the shim the maintainer's Codex CLI runs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +18,7 @@ import type { Delivery } from '../../src/core/delivery.ts';
 const BIN = fileURLToPath(new URL('../../bin/llm-bridge.js', import.meta.url));
 
 async function boot(t: { after: (fn: () => unknown) => void }): Promise<RunningHub> {
-  const dir = mkdtempSync(join(tmpdir(), 'llmb-sock-'));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'llmb-sock-')));
   writeFileSync(
     join(dir, 'config.json'),
     JSON.stringify({ projects: { claude: ['app-web'], codex: ['infra-ops'] }, daily_spend_usd: { claude: 5, codex: 5 } }),
