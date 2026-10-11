@@ -205,6 +205,13 @@ test('P29: reactions add no turn or hop, have their own cap, never park, unpark 
   assert.equal(f.store.getThread(sent.thread_id)!.state, 'open', 'the cap refuses, it does not park');
   // Sliding window: an hour later the cap has room again.
   f.clock.now += 60 * 60 * 1000 + 1;
+  // Rejected attempts count toward the cap, so invalid input can't flood the log.
+  for (let i = 0; i < 3; i++) {
+    assert.equal(await errorCode(f, f.tokens.claude, 'react', { message_id: sent.message_id, reaction: 'not an emoji' }), 'invalid_reaction');
+  }
+  assert.equal(await errorCode(f, f.tokens.claude, 'react', { message_id: sent.message_id, reaction: 'still not' }), 'limit_reactions');
+  assert.equal(f.store.auditEntries({ limit: 1000 }).filter((e) => e.action === 'react.rejected').length, 3, 'nothing logged past the cap but the refusal');
+  f.clock.now += 60 * 60 * 1000 + 1;
 
   // On a parked thread a reaction is stored, changes nothing, and is not delivered.
   f.hub.pause(sent.thread_id);

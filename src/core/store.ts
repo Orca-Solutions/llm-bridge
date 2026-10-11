@@ -466,11 +466,14 @@ export class Store {
     return (this.db.prepare('SELECT * FROM reactions WHERE thread_id = ? ORDER BY created_at, id').all(threadId) as Row[]).map(toReaction);
   }
 
-  /** Accepted react calls by a principal since a time, from the audit log
-   * (rows are replaced, so they can't be counted from the table). */
+  /** Accepted and rejected react calls by a principal since a time, from the
+   * audit log (rows are replaced, so they can't be counted from the table).
+   * Rejections count so invalid input can't flood the log. */
   countReactionsSince(principal: string, sinceIso: string): number {
     const row = this.db
-      .prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'react' AND outcome = 'ok' AND principal = ? AND at >= ?")
+      .prepare(
+        "SELECT COUNT(*) AS n FROM audit WHERE ((action = 'react' AND outcome = 'ok') OR action = 'react.rejected') AND principal = ? AND at >= ?",
+      )
       .get(principal, sinceIso) as Row;
     return Number(row.n);
   }

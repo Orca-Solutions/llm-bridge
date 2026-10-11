@@ -701,15 +701,17 @@ export class Hub extends EventEmitter {
     if (thread.state === 'closed' || thread.state === 'cancelled') throw Errors.threadClosed();
 
     const actor: Actor = { principal: session.principal, name: session.name };
+    // The cap counts rejected attempts too, and is checked first, so
+    // invalid input can't flood the audit log.
+    if (this.store.countReactionsSince(session.principal, this.iso(this.now() - HOUR_MS)) >= this.config.limits.reactions_per_hour) {
+      throw Errors.limitReactions();
+    }
     const entry = lookupReaction(params.reaction);
     if (!entry) {
       // Kept for the log as code points only, so the rejected text is inert
       // wherever the log is read. Never delivered to a model.
       this.audit(actor, 'react.rejected', 'refused', 'invalid_reaction', thread.id, m.id, { input: codePoints(params.reaction) });
       throw Errors.invalidReaction();
-    }
-    if (this.store.countReactionsSince(session.principal, this.iso(this.now() - HOUR_MS)) >= this.config.limits.reactions_per_hour) {
-      throw Errors.limitReactions();
     }
     const name = entry === REACTION_NONE ? REACTION_NONE : entry.name;
     return this.store.tx(() => {
