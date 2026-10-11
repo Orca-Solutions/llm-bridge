@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Codex } from '@openai/codex-sdk';
@@ -33,7 +33,8 @@ import { SESSION_MARKER_VAR } from '../../src/workspace/env.ts';
 import { pidsWithMarker } from '../../src/supervisor/proc.ts';
 
 function tmp(t: { after: (fn: () => void) => void }): string {
-  const root = mkdtempSync(join(tmpdir(), 'llmb-codex-'));
+  // The real path: macOS keeps temp folders behind a symlink.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'llmb-codex-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -305,7 +306,8 @@ process.stdin.on('end', () => {
   }
   out({ type: 'item.completed', item: { id: 'i1', type: 'command_execution', command: 'kubectl apply -f prod.yaml', aggregated_output: 'forbidden by policy', exit_code: 1, status: 'failed' } });
   if (input.includes('HANG')) {
-    spawn('sh', ['-c', 'nohup sleep 300 >/dev/null 2>&1 &'], { detached: true, stdio: 'ignore' }).unref();
+    // node, not sleep: macOS hides the environment of Apple's own binaries.
+    spawn('sh', ['-c', 'nohup "$0" -e "setInterval(() => {}, 1000)" >/dev/null 2>&1 &', process.execPath], { detached: true, stdio: 'ignore' }).unref();
     setInterval(() => {}, 1000);
     return;
   }
@@ -409,7 +411,7 @@ test('gate: Stop on the Codex side kills the running turn and anything it left b
   t.after(() => claude.close());
   await claude.call('send_message', { to: 'codex', kind: 'task', body: 'HANG' });
   const marker = r.codex!.marker;
-  await until(() => existsSync(log) && pidsWithMarker(marker).length >= 3); // guard, stand-in, nohup sleep
+  await until(() => existsSync(log) && pidsWithMarker(marker).length >= 3); // guard, stand-in, nohup'd grandchild
   r.hub.stopSide('codex');
   await until(() => pidsWithMarker(marker).length === 0, 10_000);
   assert.ok(!existsSync(r.paths.tokens['codex-liaison']!));
