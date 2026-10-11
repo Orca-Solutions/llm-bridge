@@ -377,7 +377,12 @@ test('gate: the launcher runs Claude Code in a fresh sparse clone with the scrub
   assert.equal(rec.env.GIT_CONFIG_GLOBAL, wp.gitConfigPath);
   assert.ok(!('GITHUB_TOKEN' in rec.env) && !('SSH_AUTH_SOCK' in rec.env));
   const allowed = new Set<string>([...PASS_THROUGH, 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_TERMINAL_PROMPT', SESSION_MARKER_VAR, 'CLAUDE_CONFIG_DIR', 'MCP_PROTOCOL_NEGOTIATION', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB']);
-  for (const k of Object.keys(rec.env)) assert.ok(allowed.has(k) || k.startsWith('OTEL_') || k === 'CLAUDE_CODE_ENABLE_TELEMETRY', k);
+  // macOS adds __CF_USER_TEXT_ENCODING to every process it starts, even one
+  // started with an empty environment, so the launcher can't remove it. It
+  // holds only the user id and text encoding; nothing else may ride in it.
+  const osAdded = process.platform === 'darwin' ? new Set(['__CF_USER_TEXT_ENCODING']) : new Set<string>();
+  if ('__CF_USER_TEXT_ENCODING' in rec.env) assert.match(rec.env.__CF_USER_TEXT_ENCODING!, /^0x[0-9A-F]+:0x[0-9A-F]+:0x[0-9A-F]+$/i);
+  for (const k of Object.keys(rec.env)) assert.ok(allowed.has(k) || osAdded.has(k) || k.startsWith('OTEL_') || k === 'CLAUDE_CODE_ENABLE_TELEMETRY', k);
   // The registered channel command reads the hub's token file from the state dir.
   const state = JSON.parse(readFileSync(join(wp.claudeConfigDir, '.claude.json'), 'utf8'));
   assert.ok(state.mcpServers.bridge.args.includes(r.paths.tokens['claude-liaison']));
