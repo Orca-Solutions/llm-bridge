@@ -8,7 +8,10 @@
 //    process group, so a child that is later reparented is still known;
 // 2. the session marker variable every agent process inherits, found by
 //    scanning the user's processes at kill time (catches a double fork that
-//    escaped before the next snapshot);
+//    escaped before the next snapshot). On macOS, ps can't show the
+//    environment of Apple's own binaries (sh, sleep and the rest of /bin and
+//    /usr/bin), so this net sees only other programs there; nets 1 and 3
+//    still cover Apple's;
 // 3. SIGTERM to every known process group, then SIGKILL after a grace period.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
