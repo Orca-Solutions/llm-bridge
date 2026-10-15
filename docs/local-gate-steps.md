@@ -181,6 +181,7 @@ node bin/llm-bridge.js hub --codex
 The first time, log the liaison's own Codex home in, from the repo folder in another terminal (it never uses your `~/.codex`):
 
 ```sh
+mkdir -m 700 ~/bridge/codex-liaison-home   # the hub fills it in on start; login only adds auth.json
 CODEX_HOME=~/bridge/codex-liaison-home npx codex login
 ```
 
