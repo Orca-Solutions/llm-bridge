@@ -67,6 +67,7 @@ export class CodexAdapter {
   private client: HubClient | null = null;
   private thread: Thread | null = null;
   private abort: AbortController | null = null;
+  private lastAgentText: string | null = null;
   private pumping = false;
   private stopped = false;
   private idle: Promise<void> = Promise.resolve();
@@ -137,9 +138,21 @@ export class CodexAdapter {
     const thread = this.thread!;
     this.abort = new AbortController();
     this.audit('codex.turn', 'ok', null, d);
+    const repliesBefore = this.repliesOn(d.thread_id);
+    this.lastAgentText = null;
+    let completed = false;
     try {
       const { events } = await thread.runStreamed(d.text, { signal: this.abort.signal });
-      for await (const ev of events) this.onEvent(ev, d);
+      for await (const ev of events) {
+        this.onEvent(ev, d);
+        if (ev.type === 'turn.completed') completed = true;
+      }
+      // Codex answers through the bridge's send_message; a final message it
+      // only wrote into its own transcript reaches nobody. Say so on the
+      // console, with what it said (agent text, shown as plain text).
+      if (completed && !this.stopped && this.repliesOn(d.thread_id) === repliesBefore) {
+        this.audit('codex.no_reply', 'error', 'no_bridge_reply', d, { last_message: (this.lastAgentText ?? '').slice(0, 500) });
+      }
     } catch (err) {
       const msg = String((err as Error).message ?? err);
       const refused = msg.includes(`code ${GUARD_REFUSED_EXIT}`) || msg.includes('guard refused');
@@ -148,6 +161,14 @@ export class CodexAdapter {
       this.abort = null;
       if (thread.id) this.saveThreadId(thread.id);
       if (!this.stopped) this.snapshot(d);
+    }
+  }
+
+  private repliesOn(threadId: string): number {
+    try {
+      return this.opts.hub.store.threadMessages(threadId).filter((m) => m.from_name === CODEX_SESSION).length;
+    } catch {
+      return 0;
     }
   }
 
@@ -162,6 +183,10 @@ export class CodexAdapter {
       // Network, writes outside the clone and execpolicy denials show up
       // here: the command was refused or failed, and the turn went on.
       this.audit('codex.command', 'refused', 'command_failed', d, { command: ev.item.command.slice(0, 300), exit_code: ev.item.exit_code ?? null });
+    } else if (ev.type === 'item.completed' && ev.item.type === 'mcp_tool_call' && ev.item.status === 'failed') {
+      this.audit('codex.mcp_call', 'error', 'mcp_call_failed', d, { server: ev.item.server, tool: ev.item.tool, error: (ev.item.error?.message ?? '').slice(0, 300) });
+    } else if (ev.type === 'item.completed' && ev.item.type === 'agent_message') {
+      this.lastAgentText = ev.item.text;
     }
   }
 
