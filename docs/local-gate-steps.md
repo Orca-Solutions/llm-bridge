@@ -131,7 +131,7 @@ Expect:
 - The socket connect fails with `Operation not permitted`. Every Unix socket is refused, the hub's included: the channel process carries all hub traffic from outside the sandbox.
 - The Read tool is not allowed.
 
-Pushing to GitHub is covered by the CI gate tests (no credential helper, no token, no remote but the bare repo). `git push` itself is on the deny list; `git push origin <branch>` to the bare repo goes through a prompt you answer.
+Pushing to GitHub is covered by the CI gate tests (no credential helper, no token, no remote but the bare repo). `git push` is on the liaison's deny list (build plan task 10), so it can't push anywhere, the bare repo included; check 9 pushes from its clone as you.
 
 ## 7. Compaction
 
