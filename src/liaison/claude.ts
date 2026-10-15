@@ -224,6 +224,10 @@ export function liaisonSettings(p: LiaisonPaths, mode: LiaisonMode = 'default'):
     isolatePeerMachines: true,
     disableAllHooks: true,
     enableAllProjectMcpServers: false,
+    // Nothing from the maintainer's claude.ai account reaches the liaison:
+    // no connectors (they write to outside services) and no synced skills.
+    disableClaudeAiConnectors: true,
+    syncClaudeAiSkills: false,
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
@@ -260,7 +264,7 @@ export function liaisonSettings(p: LiaisonPaths, mode: LiaisonMode = 'default'):
         envVars: CREDENTIAL_ENV.map((name) => ({ name, mode: 'deny' })),
       },
     },
-    env: { ...otelEnv(p.otlpEndpoint), MCP_PROTOCOL_NEGOTIATION: 'legacy', CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' },
+    env: { ...otelEnv(p.otlpEndpoint), MCP_PROTOCOL_NEGOTIATION: 'legacy', CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1', ENABLE_CLAUDEAI_MCP_SERVERS: 'false' },
   };
 }
 
@@ -328,6 +332,7 @@ export function liaisonCommand(p: LiaisonPaths, opts: { pinModeFlag?: boolean; c
       CLAUDE_CONFIG_DIR: abs(p.configDir),
       MCP_PROTOCOL_NEGOTIATION: 'legacy',
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
+      ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
       ...otelEnv(p.otlpEndpoint),
     },
   };
