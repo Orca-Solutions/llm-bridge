@@ -55,19 +55,23 @@ node bin/llm-bridge.js liaison claude
 - Claude Code asks you to confirm the development channel `server:bridge`. Confirm it. It asks every start; that's expected.
 - If it says no MCP server named `bridge` is configured instead, stop and paste the message to me. The bridge server is registered in the liaison's own `~/bridge/claude-liaison-config/.claude.json`; `CLAUDE_CONFIG_DIR=~/bridge/claude-liaison-config claude mcp get bridge` should list it as user config with a 120000 ms timeout. Whether the channel flag finds a server registered there is the one thing the vendor docs don't settle.
 - If Claude Code refuses to start and mentions the sandbox or env scrubbing, stop and paste the message to me. The settings fail closed on purpose.
+- Run `/mcp`. Expect: `bridge` is the only server listed. No claude.ai connectors, and no built-in `computer-use`.
 
 ## 2. Mode is pinned
 
-In the liaison, run `/permissions`.
+Claude Code shows the current mode on the line under the prompt box. Default mode shows no mode label there; other modes do (for example "accept edits on").
 
-- Expect: mode is **Default**.
-- Press Shift+Tab a few times. Expect: auto mode and bypass mode are never offered.
+In the liaison:
+
+- Look under the prompt box. Expect: no mode label, so the mode is **Default**.
+- Run `/permissions`. Expect: tabs for Recently denied, Allow, Ask, Deny and Workspace, and no Auto mode tab. The Deny tab lists the bridge's deny rules. Press Esc to close it.
+- Press Shift+Tab a few times, watching the line under the prompt box. Expect: it cycles through accept edits and plan mode and back to default. Auto mode and bypass mode are never offered.
 
 Then quit (`/exit`) and run the same checks with each variant:
 
 ```sh
-node bin/llm-bridge.js liaison claude --mode acceptEdits   # expect: Accept edits
-node bin/llm-bridge.js liaison claude --no-mode-flag       # expect: Default, from the settings file alone
+node bin/llm-bridge.js liaison claude --mode acceptEdits   # expect: "accept edits on" under the prompt box
+node bin/llm-bridge.js liaison claude --no-mode-flag       # expect: no mode label (Default), from the settings file alone
 ```
 
 Run check 4 (spoofing) once in each of the three.
