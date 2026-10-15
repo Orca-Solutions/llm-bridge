@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -106,7 +107,10 @@ test('gate: CODEX_HOME pins workspace-write, approval never, network off, no ext
 
   mkdirSync(p.stateDir, { recursive: true });
   prepareCodexHome(p);
-  assert.equal(readFileSync(join(p.codexHome, 'config.toml'), 'utf8'), toml);
+  const written = readFileSync(join(p.codexHome, 'config.toml'), 'utf8');
+  assert.equal(written, toml);
+  assert.deepEqual([...written.matchAll(/^\[mcp_servers\.([^\]]+)\]$/gm)].map((m) => m[1]), ['bridge', ...BRIDGE_TOOLS.map((n) => `bridge.tools.${n}`)]);
+  assert.throws(() => prepareCodexHome({ ...p, codexHome: join(p.clone, '.codex-home') }), /overlap/);
   assert.ok(readFileSync(join(p.codexHome, 'AGENTS.md'), 'utf8').includes(CODEX_STANDING_RULE));
   assert.throws(() => prepareCodexHome({ ...p, codexHome: join(p.home!, '.codex') }), /maintainer/);
   assert.throws(() => prepareCodexHome({ ...p, tokenFile: join(p.home!, 'x.token') }), /state directory/);
@@ -248,6 +252,9 @@ test('gate: the argv guard refuses any drift, and Codex never starts', async (t)
     ['writable roots', [...ok.slice(0, 4), '--config', 'sandbox_workspace_write.writable_roots=["/"]', ...ok.slice(6)]],
     ['profile', [...ok, '--profile', 'yolo']],
     ['mcp server', [...ok, '--config', 'mcp_servers.evil.command="sh"']],
+    ['tool approval', [...ok, '--config', 'mcp_servers.bridge.tools.evil.approval_mode="approve"']],
+    ['server-wide approval', [...ok, '-c', 'mcp_servers.bridge.default_tools_approval_mode="approve"']],
+    ['tool allowlist', [...ok, '--config', 'mcp_servers.bridge.enabled_tools=["evil"]']],
     ['extra prompt arg', [...ok, 'do something']],
     ['other CODEX_HOME', ok, { CODEX_HOME: join(p.home!, '.codex') }],
     ['api key', ok, { CODEX_HOME: p.codexHome, OPENAI_API_KEY: 'sk-x' }],
@@ -257,7 +264,7 @@ test('gate: the argv guard refuses any drift, and Codex never starts', async (t)
 
 // ---------------------------------------------------------- real sandbox
 
-test('gate: in the real Codex sandbox, network, writes outside the clone, /tmp, .git and Unix sockets all fail', async (t) => {
+test('gate: in the real Codex sandbox, network, writes outside the clone, /tmp, .git, Unix sockets and changes to its own config all fail', async (t) => {
   const root = tmp(t);
   const p = paths(root);
   mkdirSync(p.stateDir, { recursive: true });
@@ -279,7 +286,11 @@ test('gate: in the real Codex sandbox, network, writes outside the clone, /tmp, 
     `python3 -c "import socket\ntry:\n s=socket.socket(socket.AF_UNIX); s.connect('${p.hubSocket}'); print('UNIX_OK')\nexcept OSError: print('UNIX_DENIED')"`,
     `python3 -c "import urllib.request\ntry:\n urllib.request.urlopen('https://example.com', timeout=5); print('NET_OK')\nexcept Exception: print('NET_DENIED')"`,
     `cat ${join(p.codexHome, 'config.toml')} >/dev/null && echo READ_OUTSIDE_OK`,
+    // The bridge tools' pre-approval lives there; a turn must not widen it.
+    `echo x >> ${join(p.codexHome, 'config.toml')} && echo WRITE_CODEX_HOME_OK`,
+    `CODEX_HOME=${p.codexHome} ${bin} mcp add evil -- sh >/dev/null 2>&1 && echo MCP_ADD_OK`,
   ].join('; ');
+  const configBefore = readFileSync(join(p.codexHome, 'config.toml'), 'utf8');
   const r = await spawnAsync(bin, ['sandbox', '-c', 'sandbox_mode="workspace-write"', '--', 'sh', '-c', script], {
     cwd: p.clone,
     env: { PATH: process.env.PATH ?? '', HOME: p.home!, CODEX_HOME: p.codexHome },
@@ -288,11 +299,118 @@ test('gate: in the real Codex sandbox, network, writes outside the clone, /tmp, 
   assert.match(out, /WRITE_INSIDE_OK/, out);
   assert.match(out, /UNIX_DENIED/, out);
   assert.match(out, /NET_DENIED/, out);
-  for (const bad of ['WRITE_OUTSIDE_OK', 'WRITE_TMP_OK', 'WRITE_GIT_OK', 'UNIX_OK', 'NET_OK']) assert.ok(!out.includes(bad), `${bad}\n${out}`);
+  for (const bad of ['WRITE_OUTSIDE_OK', 'WRITE_TMP_OK', 'WRITE_GIT_OK', 'UNIX_OK', 'NET_OK', 'WRITE_CODEX_HOME_OK', 'MCP_ADD_OK']) assert.ok(!out.includes(bad), `${bad}\n${out}`);
   assert.ok(!existsSync(outside));
+  assert.equal(readFileSync(join(p.codexHome, 'config.toml'), 'utf8'), configBefore);
   // Recorded, not asserted as a protection: Codex's sandbox does not stop reads
   // outside the workspace. docs/codex-sandbox-findings.md has the details.
   assert.match(out, /READ_OUTSIDE_OK/);
+});
+
+// ------------------------------------------- bridge tools, real Codex
+
+/** The real Codex with the liaison's config (after `edit`), a stand-in model
+ * on loopback that asks for one bridge tool, and a stand-in bridge server
+ * that logs what reaches it. Returns Codex's record of the call, what the
+ * model was told, and the calls the server saw. */
+async function realCodexCallsBridgeTool(t: { after: (fn: () => void) => void }, tool: string, edit: (toml: string) => string) {
+  const root = tmp(t);
+  const calls = join(root, 'bridge-calls.log');
+  const server = join(root, 'fake-bridge.mjs');
+  const sdk = (m: string) => JSON.stringify(import.meta.resolve(`@modelcontextprotocol/sdk/server/${m}.js`));
+  writeFileSync(
+    server,
+    `import { McpServer } from ${sdk('mcp')};
+import { StdioServerTransport } from ${sdk('stdio')};
+import { appendFileSync } from 'node:fs';
+const s = new McpServer({ name: 'bridge', version: '1' });
+for (const n of ${JSON.stringify(BRIDGE_TOOLS)}) s.tool(n, n, async () => (appendFileSync(${JSON.stringify(calls)}, n + '\\n'), { content: [{ type: 'text', text: 'ok ' + n }] }));
+await s.connect(new StdioServerTransport());
+`,
+  );
+  const p = { ...paths(root), shimCommand: { command: process.execPath, args: [server] } };
+  mkdirSync(p.stateDir, { recursive: true });
+  mkdirSync(p.clone, { recursive: true });
+  mkdirSync(p.home!, { recursive: true });
+  prepareCodexHome(p);
+
+  const bodies: string[] = [];
+  const model = createHttpServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      if (req.method !== 'POST' || !req.url?.endsWith('/responses')) return void res.writeHead(404).end();
+      bodies.push(body);
+      const n = bodies.length;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const ev = (o: { type: string } & Record<string, unknown>) => res.write(`event: ${o.type}\ndata: ${JSON.stringify(o)}\n\n`);
+      ev({ type: 'response.created', response: { id: `r${n}` } });
+      const item =
+        n === 1
+          ? { type: 'function_call', id: 'fc1', call_id: 'call1', namespace: 'mcp__bridge', name: tool, arguments: '{}' }
+          : { type: 'message', role: 'assistant', id: `m${n}`, content: [{ type: 'output_text', text: 'done' }] };
+      ev({ type: 'response.output_item.done', item });
+      ev({ type: 'response.completed', response: { id: `r${n}`, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } });
+      res.end();
+    });
+  });
+  model.listen(0, '127.0.0.1');
+  await once(model, 'listening');
+  t.after(() => model.close());
+  const port = (model.address() as { port: number }).port;
+
+  // Only the model provider is added, at the top and as its own table; the
+  // rest is the liaison's config as the hub wrote it, through `edit`.
+  const config = join(p.codexHome, 'config.toml');
+  writeFileSync(
+    config,
+    [
+      'model = "stand-in"',
+      'model_provider = "stand_in"',
+      edit(readFileSync(config, 'utf8')),
+      '[model_providers.stand_in]',
+      'name = "stand-in"',
+      `base_url = "http://127.0.0.1:${port}/v1"`,
+      'wire_api = "responses"',
+      'env_key = "STAND_IN_KEY"',
+      'requires_openai_auth = false',
+      'supports_websockets = false',
+      '',
+    ].join('\n'),
+  );
+  const { bin } = findCodexBinary();
+  const r = await spawnAsync(bin, ['exec', '--skip-git-repo-check', '--json', 'go'], {
+    cwd: p.clone,
+    env: { PATH: process.env.PATH ?? '', HOME: p.home!, CODEX_HOME: p.codexHome, STAND_IN_KEY: 'x' },
+  });
+  const events = r.stdout.split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l) as { type: string; item?: Record<string, unknown> });
+  const item = events.find((e) => e.type === 'item.completed' && e.item?.type === 'mcp_tool_call')?.item ?? null;
+  const told = bodies.length > 1 ? JSON.stringify((JSON.parse(bodies[1]!) as { input: unknown[] }).input.at(-1)) : '';
+  return { item, told, calls: existsSync(calls) ? readFileSync(calls, 'utf8').split('\n').filter(Boolean) : [], out: r.stdout + r.stderr };
+}
+
+const withoutApprovals = (toml: string) => toml.replace(/^\[mcp_servers\.bridge\.tools\.[a-z_]+\]\napproval_mode = "approve"\n\n/gm, '');
+
+test('gate: with approval "never", the real Codex runs the pre-approved bridge tools', async (t) => {
+  for (const tool of BRIDGE_TOOLS) {
+    const r = await realCodexCallsBridgeTool(t, tool, (toml) => toml);
+    assert.equal(r.item?.status, 'completed', `${tool}\n${r.out}`);
+    assert.deepEqual(r.calls, [tool]);
+  }
+});
+
+test('gate: without its approval line a bridge tool fails under approval "never" and never reaches the bridge (the Mac failure)', async (t) => {
+  const r = await realCodexCallsBridgeTool(t, 'send_message', withoutApprovals);
+  assert.equal(r.item?.status, 'failed', r.out);
+  assert.match(JSON.stringify(r.item?.error), /requires approval, but approval policy is never/);
+  assert.deepEqual(r.calls, []);
+});
+
+test('gate: a tool the bridge server offers but enabled_tools leaves out is refused, approval line or not', async (t) => {
+  const r = await realCodexCallsBridgeTool(t, 'send_message', (toml) => toml.replace(/^enabled_tools = \[.*\]$/m, (l) => l.replace('"send_message", ', '')));
+  assert.equal(r.item, null, r.out);
+  assert.match(r.told, /unsupported call/);
+  assert.deepEqual(r.calls, []);
 });
 
 // --------------------------------------------------------------- adapter
