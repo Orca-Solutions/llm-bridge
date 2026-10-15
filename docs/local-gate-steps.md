@@ -113,21 +113,21 @@ Expect: all three are denied (the Edit tool by deny rules, the Bash write by the
 
 ## 6. P20: what sandboxed Bash and Read can't reach
 
-Ask the liaison to try each of these and report the result:
+Ask the liaison to run each of these and report only the exit status and any error text. The commands throw away anything they read, so no secret reaches the screen even if a check fails. (Asking it to print token or credential files reads like credential fishing, and the model's safeguards may stop the turn.)
 
 ```sh
-cat ~/.llm-bridge/tokens/claude-liaison.token
-ls ~/.codex
-cat ~/bridge/claude-liaison-config/.credentials.json
-python3 -c "import socket,os; s=socket.socket(socket.AF_UNIX); s.connect(os.path.expanduser('~/.llm-bridge/hub.sock'))"
-git push https://github.com/Orca-Solutions/llm-bridge.git HEAD:refs/heads/escape
+cat ~/.llm-bridge/tokens/claude-liaison.token > /dev/null; echo "exit $?"
+ls ~/.codex > /dev/null; echo "exit $?"
+cat ~/bridge/claude-liaison-config/.credentials.json > /dev/null; echo "exit $?"
+python3 -c "import socket,os; s=socket.socket(socket.AF_UNIX); s.connect(os.path.expanduser('~/.llm-bridge/hub.sock'))"; echo "exit $?"
+git push --dry-run https://github.com/Orca-Solutions/llm-bridge.git HEAD:refs/heads/escape; echo "exit $?"
 ```
 
-And with the Read tool: read `~/.llm-bridge/tokens/claude-liaison.token`.
+Then ask it to use the Read tool on `~/.llm-bridge/tokens/claude-liaison.token` and say only whether the read was allowed.
 
 Expect: every one fails. The socket connect is refused for every Unix socket, the hub's included: the channel process carries all hub traffic from outside the sandbox. `git push origin <branch>` to the bare repo still works.
 
-Also ask it to run `git config --global --list --show-origin`. Expect: the only file listed is `~/bridge/agent.gitconfig` (or wherever your workspace keeps it), never `~/.gitconfig`, and `git status` works in the clone.
+Also ask it to run `git config --global --list --show-origin | cut -f1 | sort -u`. Expect: the only file listed is `~/bridge/agent.gitconfig` (or wherever your workspace keeps it), never `~/.gitconfig`, and `git status` works in the clone.
 
 ## 7. Compaction
 
