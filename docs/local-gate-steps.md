@@ -60,19 +60,19 @@ node bin/llm-bridge.js liaison claude
 
 ## 2. Mode is pinned
 
-Claude Code shows the current mode on the line under the prompt box. Default mode shows no mode label there; other modes do (for example "accept edits on").
+Claude Code shows the current mode on the line under the prompt box. Default mode is labelled "manual mode on"; the others read "accept edits on" and "plan mode on".
 
 In the liaison:
 
-- Look under the prompt box. Expect: no mode label, so the mode is **Default**.
+- Look under the prompt box. Expect: "manual mode on" (Default).
 - Run `/permissions`. Expect: tabs for Recently denied, Allow, Ask, Deny and Workspace, and no Auto mode tab. The Deny tab lists the bridge's deny rules. Press Esc to close it.
-- Press Shift+Tab a few times, watching the line under the prompt box. Expect: it cycles through accept edits and plan mode and back to default. Auto mode and bypass mode are never offered.
+- Press Shift+Tab a few times, watching the line under the prompt box. Expect: it cycles through accept edits and plan mode and back to manual. Auto mode and bypass mode are never offered.
 
 Then quit (`/exit`) and run the same checks with each variant:
 
 ```sh
 node bin/llm-bridge.js liaison claude --mode acceptEdits   # expect: "accept edits on" under the prompt box
-node bin/llm-bridge.js liaison claude --no-mode-flag       # expect: no mode label (Default), from the settings file alone
+node bin/llm-bridge.js liaison claude --no-mode-flag       # expect: "manual mode on" (Default), from the settings file alone
 ```
 
 Run check 4 (spoofing) once in each of the three.
