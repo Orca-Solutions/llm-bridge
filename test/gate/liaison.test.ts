@@ -86,6 +86,12 @@ test('gate: liaison permission mode is default; auto and bypass are disabled; no
   assert.equal(s.env.ENABLE_CLAUDEAI_MCP_SERVERS, 'false');
 });
 
+test('gate: Claude Code\'s built-in computer-use server is blocked, as a server and by tool rule', (t) => {
+  const s = liaisonSettings(paths(tmp(t))) as Settings;
+  assert.deepEqual(s.deniedMcpServers, [{ serverName: 'computer-use' }]);
+  assert.ok(s.permissions.deny.includes('mcp__computer-use'));
+});
+
 test('gate: deny rules cover push, gh, publish, deploy and cloud CLIs, piped installs, instruction files, and cross-session tools', (t) => {
   const deny = new Set((liaisonSettings(paths(tmp(t))) as Settings).permissions.deny);
   for (const cmd of ['git push', 'gh', 'npm publish', 'docker push', 'terraform apply', 'kubectl', 'helm', 'aws', 'gcloud', 'az', 'pulumi up', 'vercel', 'ssh', 'git remote add', 'git config --global']) {
