@@ -212,6 +212,8 @@ export function liaisonSettings(p: LiaisonPaths, mode: LiaisonMode = 'default'):
         // Cross-session messaging stays off in every bridge session.
         'SendMessage',
         'ListAgents',
+        // Claude Code's built-in screen control, should it ever be switched on.
+        'mcp__computer-use',
       ],
       allow: ['mcp__bridge__check_inbox', 'mcp__bridge__get_thread', 'mcp__bridge__ask_human', 'mcp__bridge__close_thread'],
     },
@@ -224,6 +226,10 @@ export function liaisonSettings(p: LiaisonPaths, mode: LiaisonMode = 'default'):
     // no connectors (they write to outside services) and no synced skills.
     disableClaudeAiConnectors: true,
     syncClaudeAiSkills: false,
+    // Claude Code ships a built-in "computer-use" server (screen, mouse and
+    // keyboard). It is off unless switched on in /mcp; this keeps it from
+    // loading at all.
+    deniedMcpServers: [{ serverName: 'computer-use' }],
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
