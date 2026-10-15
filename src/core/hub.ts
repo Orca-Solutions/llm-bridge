@@ -918,6 +918,7 @@ export class Hub extends EventEmitter {
       issued.push(s.name);
     }
     this.audit(HUMAN, 'side.resume', 'ok', null, null, null, { side, issued });
+    this.emit('resume-side', side);
     return { issued };
   }
 

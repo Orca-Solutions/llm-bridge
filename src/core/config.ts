@@ -4,7 +4,7 @@
 // the previous one stays in force.
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { Side } from './types.ts';
 
 export const META_VALUE = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -48,7 +48,13 @@ export interface HubConfig {
   workspace: { repos_dir: string; clones_dir: string };
   /** Loopback port for the OTLP receiver that measures Claude-side spend. */
   otlp_port: number;
+  /** List prices (USD per million tokens) for estimating Codex-side spend
+   * from SDK usage (D13). Set them to the model the liaison runs. */
+  codex_usd_per_mtok: { input: number; cached_input: number; output: number };
 }
+
+/** Placeholder list prices; the maintainer sets the real ones at first run. */
+export const DEFAULT_CODEX_PRICES = { input: 1.25, cached_input: 0.125, output: 10 };
 
 export class ConfigError extends Error {}
 
@@ -60,7 +66,7 @@ function positiveInt(v: unknown, name: string): number {
 export function validateConfig(raw: unknown): HubConfig {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ConfigError('config must be an object');
   const c = raw as Record<string, unknown>;
-  const allowed = new Set(['owner', 'projects', 'routes', 'routing_enabled', 'daily_spend_usd', 'limits', 'console_port', 'workspace', 'otlp_port']);
+  const allowed = new Set(['owner', 'projects', 'routes', 'routing_enabled', 'daily_spend_usd', 'limits', 'console_port', 'workspace', 'otlp_port', 'codex_usd_per_mtok']);
   for (const k of Object.keys(c)) if (!allowed.has(k)) throw new ConfigError(`unknown config key: ${k}`);
 
   const owner = c.owner ?? 'jason';
@@ -131,8 +137,40 @@ export function validateConfig(raw: unknown): HubConfig {
     repos_dir: dirOf(wsRaw.repos_dir, join(homedir(), 'bridge', 'repos'), 'repos_dir'),
     clones_dir: dirOf(wsRaw.clones_dir, join(homedir(), 'bridge', 'clones'), 'clones_dir'),
   };
+  // Stop kills terminal-less processes working inside the clones (the kill
+  // switch's net 4), so the clones folder must be the agents' alone.
+  if (contains(workspace.clones_dir, homedir()) || contains(workspace.clones_dir, workspace.repos_dir)) {
+    throw new ConfigError('workspace.clones_dir must not be your home folder, one of its parents, or hold repos_dir');
+  }
 
-  return { owner, projects: out, routes: [], routing_enabled: false, daily_spend_usd: daily, limits, console_port: port, workspace, otlp_port: otlp };
+  const pricesRaw = (c.codex_usd_per_mtok ?? DEFAULT_CODEX_PRICES) as Record<string, unknown>;
+  if (typeof pricesRaw !== 'object' || Array.isArray(pricesRaw)) throw new ConfigError('codex_usd_per_mtok must be an object');
+  const prices = { ...DEFAULT_CODEX_PRICES };
+  for (const [k, v] of Object.entries(pricesRaw)) {
+    if (!(k in DEFAULT_CODEX_PRICES)) throw new ConfigError(`unknown codex_usd_per_mtok key: ${k}`);
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new ConfigError(`codex_usd_per_mtok.${k} must be a non-negative number`);
+    prices[k as keyof typeof prices] = v;
+  }
+
+  return {
+    owner,
+    projects: out,
+    routes: [],
+    routing_enabled: false,
+    daily_spend_usd: daily,
+    limits,
+    console_port: port,
+    workspace,
+    otlp_port: otlp,
+    codex_usd_per_mtok: prices,
+  };
+}
+
+/** True if `inner` is `outer` or inside it. */
+function contains(outer: string, inner: string): boolean {
+  const o = resolve(outer);
+  const i = resolve(inner);
+  return i === o || i.startsWith(o.endsWith(sep) ? o : o + sep);
 }
 
 export function loadConfig(path: string): HubConfig {
@@ -142,5 +180,9 @@ export function loadConfig(path: string): HubConfig {
   } catch (err) {
     throw new ConfigError(`cannot read config: ${(err as Error).message}`);
   }
-  return validateConfig(raw);
+  const config = validateConfig(raw);
+  if (contains(config.workspace.clones_dir, dirname(resolve(path)))) {
+    throw new ConfigError('workspace.clones_dir must not hold the hub state folder');
+  }
+  return config;
 }

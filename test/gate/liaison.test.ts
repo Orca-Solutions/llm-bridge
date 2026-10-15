@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -171,14 +171,15 @@ test('gate: the command line pins the mode, loads only the bridge channel, and n
   assert.equal(spec.envExtra.MCP_PROTOCOL_NEGOTIATION, 'legacy');
   assert.equal(spec.envExtra.ENABLE_CLAUDEAI_MCP_SERVERS, 'false');
 
-  // acceptEdits is the one other mode allowed; anything else is refused.
-  const ae = liaisonCommand(p, { mode: 'acceptEdits' }).args;
-  assert.equal(ae[ae.indexOf('--permission-mode') + 1], 'acceptEdits');
-  assert.equal((liaisonSettings(p, 'acceptEdits') as Settings).permissions.defaultMode, 'acceptEdits');
-  for (const bad of ['auto', 'bypassPermissions', 'dontAsk', 'plan']) {
-    assert.throws(() => liaisonCommand(p, { mode: bad as never }), /only in default or acceptEdits/);
-    assert.throws(() => liaisonSettings(p, bad as never), /only in default or acceptEdits/);
+  // Manual (default) is the only mode (D15): with env scrubbing on, Claude
+  // Code forces default anyway, so asking for another mode is refused.
+  for (const bad of ['acceptEdits', 'auto', 'bypassPermissions', 'dontAsk', 'plan']) {
+    assert.throws(() => liaisonCommand(p, { mode: bad as never }), /only in default \(Manual\) mode/);
+    assert.throws(() => liaisonSettings(p, bad as never), /only in default \(Manual\) mode/);
   }
+  // Env scrubbing stays on, which is what pins Claude Code to default.
+  assert.equal(spec.envExtra.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '1');
+  assert.equal((liaisonSettings(p) as Settings).env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '1');
   // The variant the gate uses to prove the settings file alone pins the mode.
   assert.ok(!liaisonCommand(p, { pinModeFlag: false }).args.includes('--permission-mode'));
 });
@@ -205,6 +206,31 @@ test('gate: the hub-owned config folder carries the standing rule and registers 
   assert.equal(statSync(p.settingsFile).mode & 0o777, 0o600);
   // Never the maintainer's own folder.
   assert.throws(() => prepareConfigDir({ ...p, configDir: join(p.home!, '.claude') }), /maintainer/);
+});
+
+test('gate: sandboxed Bash gets the bridge-only gitconfig from a hub-owned CLAUDE_ENV_FILE, because env scrubbing strips GIT_CONFIG_GLOBAL', (t) => {
+  const root = tmp(t);
+  const p = paths(root);
+  mkdirSync(p.stateDir, { recursive: true });
+  prepareConfigDir(p);
+  const envFile = liaisonCommand(p).envExtra.CLAUDE_ENV_FILE!;
+  assert.equal(envFile, join(p.configDir, 'bash-env.sh'));
+  assert.equal(statSync(envFile).mode & 0o777, 0o600);
+  // The file sits in the config folder, which the agent can't edit or write.
+  const s = liaisonSettings(p) as Settings;
+  assert.ok(s.permissions.deny.includes(`Edit(/${p.configDir}/**)`));
+  assert.ok(s.sandbox.filesystem.denyWrite.includes(p.configDir));
+  // Functional: a shell that lost GIT_CONFIG_GLOBAL to scrubbing, sourcing the
+  // file the way Claude Code does before each Bash command, uses the bridge
+  // config and never the maintainer's ~/.gitconfig.
+  mkdirSync(dirname(p.gitConfigPath), { recursive: true });
+  writeFileSync(p.gitConfigPath, '[user]\n\tname = LLM-Bridge agent\n[credential]\n\thelper =\n');
+  mkdirSync(p.home!, { recursive: true });
+  writeFileSync(join(p.home!, '.gitconfig'), '[user]\n\tname = Maintainer\n[credential]\n\thelper = osxkeychain\n');
+  const git = (cmd: string) => execFileSync('sh', ['-c', `. "$0" && ${cmd}`, envFile], { env: { PATH: process.env.PATH!, HOME: p.home! }, encoding: 'utf8' }).trim();
+  assert.equal(git('git config --global user.name'), 'LLM-Bridge agent');
+  assert.equal(git('git config --get-all credential.helper'), '');
+  assert.equal(git('printf %s "$GIT_CONFIG_NOSYSTEM:$GIT_TERMINAL_PROMPT"'), '1:0');
 });
 
 test('gate: the standing rule is in all three places', (t) => {
@@ -387,7 +413,9 @@ test('gate: the launcher runs Claude Code in a fresh sparse clone with the scrub
   assert.equal(rec.env.CLAUDE_CONFIG_DIR, wp.claudeConfigDir);
   assert.equal(rec.env.GIT_CONFIG_GLOBAL, wp.gitConfigPath);
   assert.ok(!('GITHUB_TOKEN' in rec.env) && !('SSH_AUTH_SOCK' in rec.env));
-  const allowed = new Set<string>([...PASS_THROUGH, 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_TERMINAL_PROMPT', SESSION_MARKER_VAR, 'CLAUDE_CONFIG_DIR', 'MCP_PROTOCOL_NEGOTIATION', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'ENABLE_CLAUDEAI_MCP_SERVERS']);
+  const allowed = new Set<string>([...PASS_THROUGH, 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_TERMINAL_PROMPT', SESSION_MARKER_VAR, 'CLAUDE_CONFIG_DIR', 'MCP_PROTOCOL_NEGOTIATION', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'ENABLE_CLAUDEAI_MCP_SERVERS', 'CLAUDE_ENV_FILE']);
+  // CLAUDE_ENV_FILE only ever names the hub-owned Bash env file.
+  assert.equal(rec.env.CLAUDE_ENV_FILE, join(wp.claudeConfigDir, 'bash-env.sh'));
   // macOS adds __CF_USER_TEXT_ENCODING to every process it starts, even one
   // started with an empty environment, so the launcher can't remove it. It
   // holds only the user id and text encoding; nothing else may ride in it.

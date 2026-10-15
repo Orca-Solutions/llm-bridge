@@ -17,7 +17,8 @@
     "test:gate": "node --disable-warning=ExperimentalWarning --test --test-reporter=spec \"test/gate/**/*.test.ts\""
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1"
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@openai/codex-sdk": "0.157.0"
   },
   "devDependencies": {
     "@types/node": "22.18.0",

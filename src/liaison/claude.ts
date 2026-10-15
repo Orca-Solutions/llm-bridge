@@ -14,16 +14,21 @@ import { join, resolve } from 'node:path';
 import { CLAUDE_STANDING_RULE } from '../core/standing-rule.ts';
 import { isInside } from '../workspace/manager.ts';
 
-/** The only permission modes the liaison may run in (security review
- * must-fix 1). Never auto, never bypass. */
 /** Claude Code's per-server tool-call limit for the bridge, in ms. */
 export const BRIDGE_TOOL_TIMEOUT_MS = 120_000;
 
-export const LIAISON_MODES = ['default', 'acceptEdits'] as const;
+/** The only permission mode the liaison starts in (security review must-fix
+ * 1, decision D15): default, which Claude Code labels Manual. Never auto,
+ * never bypass. acceptEdits is refused too: with
+ * CLAUDE_CODE_SUBPROCESS_ENV_SCRUB on, Claude Code forces default at start
+ * whatever mode it is given, so the flag would silently do nothing. */
+export const LIAISON_MODES = ['default'] as const;
 export type LiaisonMode = (typeof LIAISON_MODES)[number];
 
-function checkMode(mode: string): LiaisonMode {
-  if (!(LIAISON_MODES as readonly string[]).includes(mode)) throw new Error(`the liaison runs only in ${LIAISON_MODES.join(' or ')} mode`);
+export function checkMode(mode: string): LiaisonMode {
+  if (!(LIAISON_MODES as readonly string[]).includes(mode)) {
+    throw new Error(`the liaison runs only in default (Manual) mode; got "${mode}". Claude Code forces Manual while environment scrubbing is on (decision D15)`);
+  }
   return mode as LiaisonMode;
 }
 
@@ -127,6 +132,8 @@ export interface LiaisonPaths {
   /** How Claude Code should start the channel server. */
   channelCommand: { command: string; args: string[] };
   otlpEndpoint: string;
+  /** Other folders holding credentials, such as the Codex liaison's CODEX_HOME. */
+  denyReadExtra?: string[];
   home?: string;
 }
 
@@ -182,7 +189,8 @@ export function liaisonSettings(p: LiaisonPaths, mode: LiaisonMode = 'default'):
   // The config folder itself stays readable (Claude Code's shell snapshots
   // live there and sandboxed Bash sources them); its login files don't.
   const configSecrets = ['.credentials.json', '.claude.json'].map((f) => join(abs(p.configDir), f));
-  const readDeny = [abs(p.stateDir), ...configSecrets, ...CREDENTIAL_DIRS, ...CREDENTIAL_FILES];
+  const extra = (p.denyReadExtra ?? []).map(abs);
+  const readDeny = [abs(p.stateDir), ...configSecrets, ...extra, ...CREDENTIAL_DIRS, ...CREDENTIAL_FILES];
   return {
     permissions: {
       defaultMode: mode,
@@ -205,6 +213,7 @@ export function liaisonSettings(p: LiaisonPaths, mode: LiaisonMode = 'default'):
         ...CREDENTIAL_DIRS.map((d) => `Read(${d}/**)`),
         ...CREDENTIAL_FILES.map((f) => `Read(${f})`),
         ...configSecrets.map((f) => `Read(${ruleAbs(f)})`),
+        ...extra.map((d) => `Read(${ruleAbs(d)}/**)`),
         `Edit(${ruleAbs(p.stateDir)}/**)`,
         `Edit(${ruleAbs(p.configDir)}/**)`,
         `Edit(${ruleAbs(p.gitConfigPath)})`,
@@ -289,6 +298,7 @@ export function prepareConfigDir(p: LiaisonPaths, mode: LiaisonMode = 'default')
   writeJson(p.settingsFile, settings);
   writeJson(join(dir, 'settings.json'), settings);
   writeFileSync(join(dir, 'CLAUDE.md'), `# Bridge liaison standing rule\n\n${CLAUDE_STANDING_RULE}\n`, { mode: 0o600 });
+  writeFileSync(bashEnvFile(p), bashEnvScript(p), { mode: 0o600 });
 
   // Merge into .claude.json: Claude Code keeps its own state there (login,
   // onboarding), so only the bridge's keys are set.
@@ -309,6 +319,30 @@ export function prepareConfigDir(p: LiaisonPaths, mode: LiaisonMode = 'default')
   projects[abs(p.clone)] = { ...(projects[abs(p.clone)] ?? {}), hasTrustDialogAccepted: true, enabledMcpjsonServers: [], disabledMcpjsonServers: [] };
   state.projects = projects;
   writeJson(stateFile, state);
+}
+
+/** Sourced by Claude Code before every Bash command (CLAUDE_ENV_FILE).
+ * CLAUDE_CODE_SUBPROCESS_ENV_SCRUB strips GIT_CONFIG_GLOBAL from Bash's
+ * environment, and git would then fall back to the maintainer's ~/.gitconfig,
+ * which the sandbox read-denies. Exporting it here, inside the shell, keeps
+ * git on the bridge-only config. The file lives in the config folder, which
+ * the agent can neither edit nor write. */
+export function bashEnvFile(p: LiaisonPaths): string {
+  return join(abs(p.configDir), 'bash-env.sh');
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+
+function bashEnvScript(p: LiaisonPaths): string {
+  return [
+    '# Written by the LLM-Bridge hub. Sourced before every Bash command.',
+    `export GIT_CONFIG_GLOBAL=${shellQuote(abs(p.gitConfigPath))}`,
+    'export GIT_CONFIG_NOSYSTEM=1',
+    'export GIT_TERMINAL_PROMPT=0',
+    '',
+  ].join('\n');
 }
 
 export interface LaunchSpec {
@@ -335,6 +369,7 @@ export function liaisonCommand(p: LiaisonPaths, opts: { pinModeFlag?: boolean; c
       MCP_PROTOCOL_NEGOTIATION: 'legacy',
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
       ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
+      CLAUDE_ENV_FILE: bashEnvFile(p),
       ...otelEnv(p.otlpEndpoint),
     },
   };

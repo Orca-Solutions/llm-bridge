@@ -12,6 +12,7 @@ import { ConsoleServer } from '../console/server.ts';
 import { Supervisor } from '../supervisor/proc.ts';
 import { WorkspaceManager, workspacePaths } from '../workspace/manager.ts';
 import { GuardScanner, OtlpReceiver, RunWatcher } from './services.ts';
+import { startCodexLiaison, type CodexLiaison } from '../adapters/codex-launch.ts';
 
 export interface StartOptions {
   stateDir: string;
@@ -19,6 +20,10 @@ export interface StartOptions {
   consolePort?: number;
   /** Override the OTLP receiver port (tests use 0). */
   otlpPort?: number;
+  /** Run the Codex liaison in the hub (Milestone B). */
+  codex?: boolean;
+  /** Tests: a stand-in for the pinned Codex binary. */
+  codexBin?: string;
   log?: (line: string) => void;
 }
 
@@ -29,6 +34,7 @@ export interface RunningHub {
   config: HubConfig;
   supervisor: Supervisor;
   guard: GuardScanner;
+  codex: CodexLiaison | null;
   otlpPort: number;
   paths: { stateDir: string; socket: string; config: string; db: string; tokens: Record<string, string>; run: string };
   stop: () => Promise<void>;
@@ -77,7 +83,11 @@ export async function startHub(opts: StartOptions): Promise<RunningHub> {
   // supervisor tracks each session's process tree and kills it on Stop.
   const runDir = join(opts.stateDir, 'run');
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
-  const supervisor = new Supervisor();
+  // Net 4 kills what a side leaves running in its own clones (see proc.ts).
+  const supervisor = new Supervisor({
+    workRoots: (side) => [join(workspacePaths(config.workspace).clonesDir, side)],
+    onNet4Failure: (side, reason) => hub.audit({ principal: 'hub', name: 'hub' }, 'kill_switch.net4', 'error', 'net4_did_not_run', null, null, { side, reason }),
+  });
   const watcher = new RunWatcher(runDir, hub, supervisor);
   watcher.start();
   const kills = new Set<Promise<void>>();
@@ -105,6 +115,21 @@ export async function startHub(opts: StartOptions): Promise<RunningHub> {
   const otlp = new OtlpReceiver(hub, opts.otlpPort ?? config.otlp_port);
   const otlpPort = await otlp.listen();
 
+  // The Codex liaison runs inside the hub. Stop halts it (and the
+  // supervisor kills its processes); Resume starts it again.
+  let codex: CodexLiaison | null = null;
+  if (opts.codex) {
+    codex = await startCodexLiaison({ hub, config, stateDir: opts.stateDir, supervisor, codexBin: opts.codexBin, log });
+    const liaison = codex;
+    hub.on('stop-side', (side: string) => {
+      if (side === 'codex') liaison.adapter.stop();
+    });
+    hub.on('resume-side', (side: string) => {
+      if (side !== 'codex') return;
+      liaison.adapter.start().catch((err) => log(`Codex liaison failed to restart: ${(err as Error).message}`));
+    });
+  }
+
   log(`LLM-Bridge hub running.`);
   log(`  session socket: ${socketPath}`);
   log(`  console login (one use, 10 minutes): ${consoleServer.loginLink()}`);
@@ -118,11 +143,13 @@ export async function startHub(opts: StartOptions): Promise<RunningHub> {
     config,
     supervisor,
     guard,
+    codex,
     otlpPort,
     paths: { stateDir: opts.stateDir, socket: socketPath, config: configPath, db: dbPath, tokens: tokenPaths, run: runDir },
     stop: async () => {
       watcher.stop();
       guard.stop();
+      codex?.adapter.stop();
       await Promise.all([...kills]);
       supervisor.stopAll();
       await otlp.close();

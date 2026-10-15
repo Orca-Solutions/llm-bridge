@@ -96,6 +96,7 @@ export function workspacePaths(ws: { repos_dir: string; clones_dir: string }) {
     clonesDir: resolve(ws.clones_dir),
     gitConfigPath: join(root, 'agent.gitconfig'),
     claudeConfigDir: join(root, 'claude-liaison-config'),
+    codexHome: join(root, 'codex-liaison-home'),
   };
 }
 
