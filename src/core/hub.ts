@@ -921,6 +921,15 @@ export class Hub extends EventEmitter {
     return { issued };
   }
 
+  /** What the console shows per side: "stopped" while a session of that
+   * side has no live token (its kill switch was pressed and Resume would
+   * reissue it), otherwise "running". */
+  sideStates(): Record<Side, 'running' | 'stopped'> {
+    const state = (side: Side) =>
+      [...this.sessionsByName.values()].some((s) => s.side === side && !this.tokens.hasToken(s.name)) ? 'stopped' : 'running';
+    return { claude: state('claude'), codex: state('codex') };
+  }
+
   /** Record repo-file guard hits (build plan task 8) for the console. */
   recordGuardFlags(flags: { project: string; ref: string; commit: string; hits: { path: string; rule: string }[]; diff: string }[]): number {
     let added = 0;

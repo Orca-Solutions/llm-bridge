@@ -253,6 +253,7 @@ export class ConsoleServer {
           options: q.options.map(visibleForConsole),
         })),
         guards: this.hub.guardCounters(),
+        sides: this.hub.sideStates(),
         guard_flags: this.hub.store.guardFlags().map((f) => ({
           ...f,
           ref: visibleForConsole(f.ref),

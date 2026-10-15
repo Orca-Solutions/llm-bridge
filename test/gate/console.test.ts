@@ -174,6 +174,20 @@ test('every console action records who took it', async (t) => {
   for (const a of ['human.message', 'thread.pause', 'thread.unpark', 'thread.stop']) assert.ok(actions.includes(a), a);
 });
 
+test('the console shows whether each side is running or stopped; Stop is never disabled', async (t) => {
+  const s = await setup(t);
+  const sides = async () => (JSON.parse((await http(s.port, 'GET', '/api/threads', { Cookie: s.cookie })).body) as { sides: Record<string, string> }).sides;
+  assert.deepEqual(await sides(), { claude: 'running', codex: 'running' });
+  await s.post('/api/sides/claude/stop', {});
+  assert.deepEqual(await sides(), { claude: 'stopped', codex: 'running' });
+  await s.post('/api/sides/claude/resume', {});
+  assert.deepEqual(await sides(), { claude: 'running', codex: 'running' });
+  // Only Resume greys out. The kill switch works whatever state the console shows.
+  const js = readFileSync(new URL('../../src/console/static/app.js', import.meta.url), 'utf8');
+  assert.match(js, /resume-/);
+  assert.ok(!/stop-(claude|codex|all)'\)\.disabled/.test(js));
+});
+
 test('routing stays off from the console', async (t) => {
   const s = await setup(t);
   const r = await s.post('/api/routes', { claude: 'app-web', codex: 'infra-ops' });
