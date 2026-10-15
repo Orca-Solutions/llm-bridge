@@ -4,7 +4,7 @@
 //   llm-bridge hub [--state-dir DIR] [--codex]
 //   llm-bridge mcp --socket PATH --token-file PATH
 //   llm-bridge repo add PROJECT --from PATH [--state-dir DIR]
-//   llm-bridge liaison claude [--state-dir DIR] [--clone PATH] [--mode default|acceptEdits] [--no-mode-flag]
+//   llm-bridge liaison claude [--state-dir DIR] [--clone PATH] [--mode default] [--no-mode-flag]
 //   llm-bridge channel --socket PATH --token-file PATH   (Claude Code runs this)
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -16,7 +16,7 @@ import { ensureStateDir, startHub } from '../hub/main.ts';
 import { runShim } from '../shim/bridge-mcp.ts';
 import { runChannel } from '../channel/server.ts';
 import { runClaudeLiaison } from '../liaison/launch.ts';
-import type { LiaisonMode } from '../liaison/claude.ts';
+import { checkMode } from '../liaison/claude.ts';
 import { WorkspaceManager, workspacePaths } from '../workspace/manager.ts';
 
 const DEFAULT_STATE_DIR = join(homedir(), '.llm-bridge');
@@ -29,7 +29,7 @@ function usage(): never {
       '  llm-bridge hub [--state-dir DIR] [--codex]',
       '  llm-bridge mcp --socket PATH --token-file PATH',
       '  llm-bridge repo add PROJECT --from PATH [--state-dir DIR]',
-      '  llm-bridge liaison claude [--state-dir DIR] [--clone PATH] [--mode default|acceptEdits] [--no-mode-flag]',
+      '  llm-bridge liaison claude [--state-dir DIR] [--clone PATH] [--mode default] [--no-mode-flag]',
       '  llm-bridge channel --socket PATH --token-file PATH',
       '',
     ].join('\n'),
@@ -141,7 +141,7 @@ export async function main(argv: string[]): Promise<void> {
     const code = await runClaudeLiaison({
       stateDir: resolve(values['state-dir'] ?? DEFAULT_STATE_DIR),
       clone: values.clone,
-      mode: (values.mode ?? 'default') as LiaisonMode,
+      mode: checkMode(values.mode ?? 'default'),
       pinModeFlag: !values['no-mode-flag'],
     });
     process.exit(code);

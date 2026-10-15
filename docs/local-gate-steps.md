@@ -68,14 +68,16 @@ In the liaison:
 - Run `/permissions`. Expect: tabs for Recently denied, Allow, Ask, Deny and Workspace, and no Auto mode tab. The Deny tab lists the bridge's deny rules. Press Esc to close it.
 - Press Shift+Tab a few times, watching the line under the prompt box. Expect: it cycles through accept edits and plan mode and back to manual. Auto mode and bypass mode are never offered.
 
-Then quit (`/exit`) and run the same checks with each variant:
+Then quit (`/exit`) and try the two variants:
 
 ```sh
-node bin/llm-bridge.js liaison claude --mode acceptEdits   # expect: "accept edits on" under the prompt box
+node bin/llm-bridge.js liaison claude --mode acceptEdits   # expect: refused, "the liaison runs only in default (Manual) mode" (decision D15)
 node bin/llm-bridge.js liaison claude --no-mode-flag       # expect: "manual mode on" (Default), from the settings file alone
 ```
 
-Run check 4 (spoofing) once in each of the three.
+The liaison always starts in Manual: with environment scrubbing on, Claude Code forces Manual whatever mode it is given (D15). You can still press Shift+Tab inside a session to switch to accept edits.
+
+Run check 4 (spoofing) three times: once in a normal start, once with `--no-mode-flag`, and once after pressing Shift+Tab to accept edits.
 
 ## 3. Milestone A: a review round trip (P24)
 

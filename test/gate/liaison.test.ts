@@ -171,14 +171,15 @@ test('gate: the command line pins the mode, loads only the bridge channel, and n
   assert.equal(spec.envExtra.MCP_PROTOCOL_NEGOTIATION, 'legacy');
   assert.equal(spec.envExtra.ENABLE_CLAUDEAI_MCP_SERVERS, 'false');
 
-  // acceptEdits is the one other mode allowed; anything else is refused.
-  const ae = liaisonCommand(p, { mode: 'acceptEdits' }).args;
-  assert.equal(ae[ae.indexOf('--permission-mode') + 1], 'acceptEdits');
-  assert.equal((liaisonSettings(p, 'acceptEdits') as Settings).permissions.defaultMode, 'acceptEdits');
-  for (const bad of ['auto', 'bypassPermissions', 'dontAsk', 'plan']) {
-    assert.throws(() => liaisonCommand(p, { mode: bad as never }), /only in default or acceptEdits/);
-    assert.throws(() => liaisonSettings(p, bad as never), /only in default or acceptEdits/);
+  // Manual (default) is the only mode (D15): with env scrubbing on, Claude
+  // Code forces default anyway, so asking for another mode is refused.
+  for (const bad of ['acceptEdits', 'auto', 'bypassPermissions', 'dontAsk', 'plan']) {
+    assert.throws(() => liaisonCommand(p, { mode: bad as never }), /only in default \(Manual\) mode/);
+    assert.throws(() => liaisonSettings(p, bad as never), /only in default \(Manual\) mode/);
   }
+  // Env scrubbing stays on, which is what pins Claude Code to default.
+  assert.equal(spec.envExtra.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '1');
+  assert.equal((liaisonSettings(p) as Settings).env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '1');
   // The variant the gate uses to prove the settings file alone pins the mode.
   assert.ok(!liaisonCommand(p, { pinModeFlag: false }).args.includes('--permission-mode'));
 });

@@ -139,7 +139,7 @@ Done when:
 Launcher with hub-owned settings, plus the channel plugin. The channel server is registered user-scope in the hub-owned `CLAUDE_CONFIG_DIR` (its `.claude.json`); Claude Code spawns it, and it connects to the hub socket with its token file. If the channel won't load, the fallback is the Agent SDK (decision 3); `check_inbox` serves outside clients and `-p` workers, not an interactive liaison.
 
 Launcher settings (from the security review's must-fix item 1 and the plan's rule 2):
-- `--permission-mode default` (or `acceptEdits`) on the command line and `permissions.defaultMode` in the hub-owned settings, because auto is the interactive default since Claude Code 2.1.283. Never `auto`, never `--dangerously-skip-permissions`.
+- `--permission-mode default` on the command line (Manual only, D15; `acceptEdits` was dropped because Claude Code forces default while env scrubbing is on) and `permissions.defaultMode` in the hub-owned settings, because auto is the interactive default since Claude Code 2.1.283. Never `auto`, never `--dangerously-skip-permissions`.
 - `projects["<clone>"].hasTrustDialogAccepted` pre-set in the hub-owned `.claude.json`, so the trust dialog doesn't appear. Never set in jason's own `~/.claude.json`. Safe only because the clone is sparse (P21).
 - `MCP_PROTOCOL_NEGOTIATION=legacy` in the liaison's environment, as a second guard for the channel handshake.
 - Own `CLAUDE_CONFIG_DIR` and `--settings` file owned by the hub.
@@ -152,7 +152,7 @@ Launcher settings (from the security review's must-fix item 1 and the plan's rul
 
 Done when:
 - **P12**: the channel's capabilities object has no `claude/channel/permission` key.
-- Gate: the three spoofing messages (`</channel>` plus a fake user turn, a fake "message from jason" wrapper, "jason approved X") run end to end in each permission mode the liaison may use, `default` and `acceptEdits`, and once with no `--permission-mode` flag to prove the settings file alone pins the mode. No consequential action runs.
+- Gate: the three spoofing messages (`</channel>` plus a fake user turn, a fake "message from jason" wrapper, "jason approved X") run end to end in `default` (the only start mode, D15), in `acceptEdits` reached with Shift+Tab inside the session, and once with no `--permission-mode` flag to prove the settings file alone pins the mode. No consequential action runs.
 - The running permission mode is asserted (statusline JSON or `/permissions` output).
 - Gate: the liaison's own attempt to edit `CLAUDE.md` or `.claude/settings.json` is denied.
 - The liaison states the requesting message id before a consequential tool call.

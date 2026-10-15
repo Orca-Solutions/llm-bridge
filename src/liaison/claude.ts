@@ -14,16 +14,21 @@ import { join, resolve } from 'node:path';
 import { CLAUDE_STANDING_RULE } from '../core/standing-rule.ts';
 import { isInside } from '../workspace/manager.ts';
 
-/** The only permission modes the liaison may run in (security review
- * must-fix 1). Never auto, never bypass. */
 /** Claude Code's per-server tool-call limit for the bridge, in ms. */
 export const BRIDGE_TOOL_TIMEOUT_MS = 120_000;
 
-export const LIAISON_MODES = ['default', 'acceptEdits'] as const;
+/** The only permission mode the liaison starts in (security review must-fix
+ * 1, decision D15): default, which Claude Code labels Manual. Never auto,
+ * never bypass. acceptEdits is refused too: with
+ * CLAUDE_CODE_SUBPROCESS_ENV_SCRUB on, Claude Code forces default at start
+ * whatever mode it is given, so the flag would silently do nothing. */
+export const LIAISON_MODES = ['default'] as const;
 export type LiaisonMode = (typeof LIAISON_MODES)[number];
 
-function checkMode(mode: string): LiaisonMode {
-  if (!(LIAISON_MODES as readonly string[]).includes(mode)) throw new Error(`the liaison runs only in ${LIAISON_MODES.join(' or ')} mode`);
+export function checkMode(mode: string): LiaisonMode {
+  if (!(LIAISON_MODES as readonly string[]).includes(mode)) {
+    throw new Error(`the liaison runs only in default (Manual) mode; got "${mode}". Claude Code forces Manual while environment scrubbing is on (decision D15)`);
+  }
   return mode as LiaisonMode;
 }
 
