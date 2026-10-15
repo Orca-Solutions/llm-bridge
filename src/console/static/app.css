@@ -26,6 +26,7 @@ textarea { width: 100%; font: inherit; padding: 6px; background: var(--panel); c
 select { background: var(--panel); color: var(--fg); border: 1px solid var(--line); }
 button { font: inherit; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
 button.danger { border-color: var(--danger); color: var(--danger); }
+button:disabled { opacity: 0.4; cursor: default; }
 .muted { color: var(--muted); }
 #audit li { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
 footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 6px 16px; color: var(--danger); background: var(--bg); }

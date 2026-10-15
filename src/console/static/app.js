@@ -38,6 +38,15 @@
       ', Codex ' + g.spend_today_usd.codex.toFixed(2) + '/' + g.daily_spend_usd.codex;
   }
 
+  // Resume does something only for a stopped side, so it greys out
+  // otherwise. Stop buttons are never disabled: the kill switch must work
+  // whatever state the console last saw.
+  function renderSides(sides) {
+    $('sides').textContent = 'Claude side: ' + sides.claude + ' · Codex side: ' + sides.codex;
+    $('resume-claude').disabled = sides.claude !== 'stopped';
+    $('resume-codex').disabled = sides.codex !== 'stopped';
+  }
+
   function renderQuestions(qs) {
     const ul = $('questions');
     ul.replaceChildren();
@@ -132,6 +141,7 @@
     try {
       const data = await api('/api/threads');
       renderGuards(data.guards);
+      renderSides(data.sides);
       renderQuestions(data.questions);
       renderThreads(data.threads);
       renderGuardFlags(data.guard_flags);
