@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ThreadOptions } from '@openai/codex-sdk';
 import { CODEX_STANDING_RULE } from '../core/standing-rule.ts';
+import { BRIDGE_TOOLS } from '../core/hub.ts';
 import { isInside } from '../workspace/manager.ts';
 
 export interface CodexLiaisonPaths {
@@ -133,7 +134,13 @@ export function codexConfigToml(p: CodexLiaisonPaths): string {
     `args = [${p.shimCommand.args.map(tomlString).join(', ')}]`,
     // Above check_inbox's longest wait (45 s); Codex's default is 60 s.
     'tool_timeout_sec = 90',
+    // Codex asks before every MCP tool call, and under approval "never" that
+    // ask fails the call, so the liaison could never reply. Approve the
+    // bridge's own tools by name, and only those: no server-wide default,
+    // and enabled_tools hides anything else the shim might offer.
+    `enabled_tools = [${BRIDGE_TOOLS.map(tomlString).join(', ')}]`,
     '',
+    ...BRIDGE_TOOLS.flatMap((tool) => [`[mcp_servers.bridge.tools.${tool}]`, 'approval_mode = "approve"', '']),
     `[projects.${tomlString(clone)}]`,
     'trust_level = "untrusted"',
     '',

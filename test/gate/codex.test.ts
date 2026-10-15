@@ -26,6 +26,7 @@ import { GUARD_BIN_VAR, GUARD_CLONE_VAR } from '../../src/liaison/codex-guard.ts
 import { findCodexBinary } from '../../src/liaison/codex-bin.ts';
 import { CODEX_BRANCH, GUARD_BIN, turnCost } from '../../src/adapters/codex.ts';
 import { CODEX_STANDING_RULE } from '../../src/core/standing-rule.ts';
+import { BRIDGE_TOOLS } from '../../src/core/hub.ts';
 import { startHub, type RunningHub } from '../../src/hub/main.ts';
 import { HubClient } from '../../src/hub/client.ts';
 import { WorkspaceManager, workspacePaths } from '../../src/workspace/manager.ts';
@@ -93,6 +94,15 @@ test('gate: CODEX_HOME pins workspace-write, approval never, network off, no ext
   assert.ok(toml.includes(JSON.stringify(CODEX_DEVELOPER_INSTRUCTIONS)));
   assert.ok(CODEX_DEVELOPER_INSTRUCTIONS.includes(CODEX_STANDING_RULE));
   assert.ok(!/danger-full-access|on-request|bypass/.test(toml));
+  // Codex asks before any MCP tool call, and with approval "never" that ask
+  // fails the call. Only the bridge's own tools are approved, one by one: no
+  // server-wide default, no other server, no tool the bridge doesn't have.
+  assert.match(toml, new RegExp(`^enabled_tools = \\[${BRIDGE_TOOLS.map((n) => `"${n}"`).join(', ')}\\]$`, 'm'));
+  assert.ok(!/default_tools_approval_mode/.test(toml));
+  const approved = [...toml.matchAll(/^\[mcp_servers\.([^.\]]+)\.tools\.([^\]]+)\]\napproval_mode = "approve"$/gm)].map((m) => `${m[1]}.${m[2]}`);
+  assert.deepEqual(approved, BRIDGE_TOOLS.map((n) => `bridge.${n}`));
+  assert.equal(toml.match(/approval_mode/g)?.length, BRIDGE_TOOLS.length);
+  assert.deepEqual([...toml.matchAll(/^\[mcp_servers\.([^.\]]+)\]$/gm)].map((m) => m[1]), ['bridge']);
 
   mkdirSync(p.stateDir, { recursive: true });
   prepareCodexHome(p);
@@ -110,6 +120,10 @@ test('the real Codex CLI parses the liaison config and sees only the bridge MCP 
   const out = execFileSync(bin, ['mcp', 'list', '--json'], { env: { PATH: process.env.PATH ?? '', HOME: p.home!, CODEX_HOME: p.codexHome }, encoding: 'utf8' });
   const servers = JSON.parse(out) as { name: string }[];
   assert.deepEqual(servers.map((s) => s.name), ['bridge']);
+  const bridge = JSON.parse(execFileSync(bin, ['mcp', 'get', 'bridge', '--json'], { env: { PATH: process.env.PATH ?? '', HOME: p.home!, CODEX_HOME: p.codexHome }, encoding: 'utf8' })) as {
+    enabled_tools?: string[];
+  };
+  assert.deepEqual(bridge.enabled_tools, [...BRIDGE_TOOLS]);
 });
 
 test('gate: execpolicy forbids terraform apply, kubectl and the other deploy tools; ordinary commands pass', (t) => {
