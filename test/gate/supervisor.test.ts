@@ -4,10 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { Supervisor } from '../../src/supervisor/proc.ts';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { Supervisor, cwdsUnder } from '../../src/supervisor/proc.ts';
+import { ConfigError, loadConfig, validateConfig } from '../../src/core/config.ts';
 import { SESSION_MARKER_VAR } from '../../src/workspace/env.ts';
 
 function alive(pid: number): boolean {
@@ -113,4 +114,48 @@ test('gate: Stop kills an orphan that macOS hides from the marker scan, found by
   assert.equal(findSleeps('3012').filter(alive).length, 1, 'an orphan outside the clones survives');
   assert.equal(findSleeps('3013').filter(alive).length, 1, 'your own terminal in the clone survives');
   assert.ok(alive(term.pid!));
+});
+
+test('net 4 says when it could not run: lsof missing, or stuck past its timeout', async (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'llmb-lsof-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const missing = cwdsUnder([dir], { method: 'lsof', lsofBin: join(dir, 'no-such-lsof') });
+  assert.equal(missing.cwds.size, 0);
+  assert.match(missing.failure ?? '', /lsof/);
+
+  const slow = join(dir, 'slow-lsof');
+  writeFileSync(slow, '#!/bin/sh\nsleep 10\n');
+  chmodSync(slow, 0o755);
+  const started = Date.now();
+  const stuck = cwdsUnder([dir], { method: 'lsof', lsofBin: slow, timeoutMs: 300 });
+  assert.ok(Date.now() - started < 3000, 'a stuck lsof never holds up Stop');
+  assert.match(stuck.failure ?? '', /timed out/);
+
+  const failures: string[] = [];
+  const sup = new Supervisor({ workRoots: () => [dir], cwdScan: { method: 'lsof', lsofBin: join(dir, 'no-such-lsof') }, onNet4Failure: (side, reason) => failures.push(`${side}: ${reason}`) });
+  const child = spawn('sleep', ['3021'], { stdio: 'ignore', detached: true });
+  sup.track({ name: 'claude-liaison', side: 'claude', rootPid: child.pid!, marker: 'never-matches' });
+  await sup.killSide('claude');
+  assert.equal(failures.length, 1);
+  assert.match(failures[0]!, /^claude: .*lsof/);
+});
+
+test('config refuses a clones folder that would point net 4 at your whole home', () => {
+  const base = { projects: { claude: ['app-web'], codex: ['infra-ops'] }, daily_spend_usd: { claude: 5, codex: 5 } };
+  const home = homedir();
+  for (const clones of ['/', home, dirname(home), join(home, 'bridge')]) {
+    assert.throws(() => validateConfig({ ...base, workspace: { repos_dir: join(home, 'bridge', 'repos'), clones_dir: clones } }), ConfigError, clones);
+  }
+  assert.doesNotThrow(() => validateConfig({ ...base, workspace: { repos_dir: join(home, 'bridge', 'repos'), clones_dir: join(home, 'bridge', 'clones') } }));
+
+  // Nor one that holds the hub's own state folder.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'llmb-cfg-')));
+  try {
+    const state = join(dir, 'state');
+    mkdirSync(state);
+    writeFileSync(join(state, 'config.json'), JSON.stringify({ ...base, workspace: { repos_dir: join(dir, 'repos'), clones_dir: dir } }));
+    assert.throws(() => loadConfig(join(state, 'config.json')), ConfigError);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

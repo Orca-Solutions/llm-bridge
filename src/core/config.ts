@@ -4,7 +4,7 @@
 // the previous one stays in force.
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { Side } from './types.ts';
 
 export const META_VALUE = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -137,6 +137,11 @@ export function validateConfig(raw: unknown): HubConfig {
     repos_dir: dirOf(wsRaw.repos_dir, join(homedir(), 'bridge', 'repos'), 'repos_dir'),
     clones_dir: dirOf(wsRaw.clones_dir, join(homedir(), 'bridge', 'clones'), 'clones_dir'),
   };
+  // Stop kills terminal-less processes working inside the clones (the kill
+  // switch's net 4), so the clones folder must be the agents' alone.
+  if (contains(workspace.clones_dir, homedir()) || contains(workspace.clones_dir, workspace.repos_dir)) {
+    throw new ConfigError('workspace.clones_dir must not be your home folder, one of its parents, or hold repos_dir');
+  }
 
   const pricesRaw = (c.codex_usd_per_mtok ?? DEFAULT_CODEX_PRICES) as Record<string, unknown>;
   if (typeof pricesRaw !== 'object' || Array.isArray(pricesRaw)) throw new ConfigError('codex_usd_per_mtok must be an object');
@@ -161,6 +166,13 @@ export function validateConfig(raw: unknown): HubConfig {
   };
 }
 
+/** True if `inner` is `outer` or inside it. */
+function contains(outer: string, inner: string): boolean {
+  const o = resolve(outer);
+  const i = resolve(inner);
+  return i === o || i.startsWith(o.endsWith(sep) ? o : o + sep);
+}
+
 export function loadConfig(path: string): HubConfig {
   let raw: unknown;
   try {
@@ -168,5 +180,9 @@ export function loadConfig(path: string): HubConfig {
   } catch (err) {
     throw new ConfigError(`cannot read config: ${(err as Error).message}`);
   }
-  return validateConfig(raw);
+  const config = validateConfig(raw);
+  if (contains(config.workspace.clones_dir, dirname(resolve(path)))) {
+    throw new ConfigError('workspace.clones_dir must not hold the hub state folder');
+  }
+  return config;
 }

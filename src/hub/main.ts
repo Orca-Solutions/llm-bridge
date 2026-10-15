@@ -84,7 +84,10 @@ export async function startHub(opts: StartOptions): Promise<RunningHub> {
   const runDir = join(opts.stateDir, 'run');
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
   // Net 4 kills what a side leaves running in its own clones (see proc.ts).
-  const supervisor = new Supervisor({ workRoots: (side) => [join(workspacePaths(config.workspace).clonesDir, side)] });
+  const supervisor = new Supervisor({
+    workRoots: (side) => [join(workspacePaths(config.workspace).clonesDir, side)],
+    onNet4Failure: (side, reason) => hub.audit({ principal: 'hub', name: 'hub' }, 'kill_switch.net4', 'error', 'net4_did_not_run', null, null, { side, reason }),
+  });
   const watcher = new RunWatcher(runDir, hub, supervisor);
   watcher.start();
   const kills = new Set<Promise<void>>();
