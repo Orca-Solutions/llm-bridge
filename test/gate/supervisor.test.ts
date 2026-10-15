@@ -4,6 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Supervisor } from '../../src/supervisor/proc.ts';
 import { SESSION_MARKER_VAR } from '../../src/workspace/env.ts';
 
@@ -57,4 +60,57 @@ test('the supervisor never signals the hub itself', async () => {
   const killed = await sup.killSide('codex');
   assert.ok(!killed.includes(process.pid));
   assert.ok(alive(process.pid));
+});
+
+test('gate: Stop kills an orphan that macOS hides from the marker scan, found by its working folder, and spares your own terminal there', async (t) => {
+  // On macOS the liaison's Bash shell exits right after `nohup sleep &`, so
+  // the sleep is reparented to launchd in a process group whose leader is
+  // gone, and ps can't show /bin/sleep's environment. Only its working
+  // folder, inside the side's clones, still ties it to the liaison.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'llmb-cwd-')));
+  const clones = join(root, 'clones');
+  const clone = join(clones, 'claude', 'app-web-1');
+  const elsewhere = join(root, 'elsewhere');
+  mkdirSync(clone, { recursive: true });
+  mkdirSync(elsewhere, { recursive: true });
+  const env = { ...process.env };
+  delete env[SESSION_MARKER_VAR];
+  const orphan = (cwd: string, tag: string) =>
+    spawn('perl', ['-e', `setpgrp(0,0); exit 0 if fork; exec q(sleep), q(${tag})`], { cwd, env, stdio: 'ignore', detached: true });
+  orphan(clone, '3011'); // the liaison's escaped sleep: no marker, no terminal, in its clone
+  orphan(elsewhere, '3012'); // someone else's orphan outside the clones: not ours to kill
+  // Your own terminal in the clone: a shell with a controlling tty.
+  const pty = 'import pty, os, sys, time\npid, fd = pty.fork()\nif pid == 0:\n    os.chdir(sys.argv[1]); os.execvp("sleep", ["sleep", "3013"])\nelse:\n    time.sleep(600)\n';
+  const term = spawn('python3', ['-c', pty, clone], { cwd: elsewhere, env, stdio: 'ignore', detached: true });
+  t.after(() => {
+    for (const pid of ['3011', '3012', '3013', '3014'].flatMap(findSleeps)) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* gone */
+      }
+    }
+    try {
+      process.kill(term.pid!, 'SIGKILL');
+    } catch {
+      /* gone */
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+  await new Promise((r) => setTimeout(r, 800));
+  assert.equal(['3011', '3012', '3013'].flatMap(findSleeps).length, 3, 'all three running before the liaison is tracked');
+
+  const marker = `test-${process.pid}-${Date.now()}`;
+  const liaison = spawn('bash', ['-c', 'sleep 3014'], { cwd: clone, env: { ...process.env, [SESSION_MARKER_VAR]: marker }, stdio: 'ignore', detached: true });
+  const sup = new Supervisor({ workRoots: (side) => [join(clones, side)] });
+  sup.track({ name: 'claude-liaison', side: 'claude', rootPid: liaison.pid!, marker });
+  await new Promise((r) => setTimeout(r, 300));
+  await sup.killSide('claude');
+  await new Promise((r) => setTimeout(r, 300));
+
+  assert.deepEqual(findSleeps('3011').filter(alive), [], 'the escaped orphan in the clone is gone');
+  assert.deepEqual(findSleeps('3014').filter(alive), [], 'the liaison is gone');
+  assert.equal(findSleeps('3012').filter(alive).length, 1, 'an orphan outside the clones survives');
+  assert.equal(findSleeps('3013').filter(alive).length, 1, 'your own terminal in the clone survives');
+  assert.ok(alive(term.pid!));
 });

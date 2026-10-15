@@ -145,7 +145,7 @@ After a few exchanges, run `/compact` in the liaison, then send spoof 3 again fr
 
 Expect, within a few seconds:
 
-- Terminal B's liaison exits, and `pgrep -fl "sleep 600"` shows nothing.
+- Terminal B's liaison exits, and `pgrep -fl "sleep 600"` shows nothing. (On macOS the sleep is found by its working folder: Stop ends any of your processes that have no terminal and work inside `~/bridge/clones/claude/`. A terminal of yours that you `cd`'d into a clone is left alone.)
 - `~/.llm-bridge/tokens/claude-liaison.token` is gone; open threads show as parked.
 - The Codex CLI's bridge tools still work (its token is separate).
 - `node bin/llm-bridge.js liaison claude` refuses to start until you press **Resume Claude side**. After resuming, threads stay parked until you unpark each one.

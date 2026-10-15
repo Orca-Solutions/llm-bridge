@@ -83,7 +83,8 @@ export async function startHub(opts: StartOptions): Promise<RunningHub> {
   // supervisor tracks each session's process tree and kills it on Stop.
   const runDir = join(opts.stateDir, 'run');
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
-  const supervisor = new Supervisor();
+  // Net 4 kills what a side leaves running in its own clones (see proc.ts).
+  const supervisor = new Supervisor({ workRoots: (side) => [join(workspacePaths(config.workspace).clonesDir, side)] });
   const watcher = new RunWatcher(runDir, hub, supervisor);
   watcher.start();
   const kills = new Set<Promise<void>>();
