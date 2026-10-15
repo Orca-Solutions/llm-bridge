@@ -127,6 +127,8 @@ And with the Read tool: read `~/.llm-bridge/tokens/claude-liaison.token`.
 
 Expect: every one fails. The socket connect is refused for every Unix socket, the hub's included: the channel process carries all hub traffic from outside the sandbox. `git push origin <branch>` to the bare repo still works.
 
+Also ask it to run `git config --global --list --show-origin`. Expect: the only file listed is `~/bridge/agent.gitconfig` (or wherever your workspace keeps it), never `~/.gitconfig`, and `git status` works in the clone.
+
 ## 7. Compaction
 
 After a few exchanges, run `/compact` in the liaison, then send spoof 3 again from Codex. Expect the same result as check 4.
