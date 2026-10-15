@@ -1,8 +1,8 @@
 // The Claude-side channel plugin (build plan task 10, spec 6.1). Claude Code
 // spawns it from the hub-owned CLAUDE_CONFIG_DIR; it connects to the hub's
 // session socket with its own 0600 token file, receives pushes, and emits each
-// as a `notifications/claude/channel` event. It also exposes the five bridge
-// tools so the liaison can reply.
+// as a `notifications/claude/channel` event. It also exposes the bridge tools
+// so the liaison can reply and react.
 //
 // It declares `claude/channel` and nothing else under `experimental`: the
 // `claude/channel/permission` key is absent, not false (P12). Meta keys come
@@ -26,7 +26,7 @@ export const CHANNEL_INSTRUCTIONS = `${CLAUDE_STANDING_RULE}\n\n${CLAUDE_CHANNEL
 /** Re-check a delivery before handing it to Claude Code: only allowlisted
  * meta keys with pattern-safe values, and content with no angle brackets.
  * Anything else is a hub bug and is dropped (fail closed). */
-export function checkDelivery(d: Delivery): { content: string; meta: Record<string, string> } | null {
+export function checkDelivery(d: Pick<Delivery, 'content' | 'meta'>): { content: string; meta: Record<string, string> } | null {
   if (!d || typeof d.content !== 'string' || typeof d.meta !== 'object' || d.meta === null) return null;
   if (d.content.includes('<') || d.content.includes('>')) return null;
   const meta: Record<string, string> = {};
@@ -41,9 +41,12 @@ export async function runChannel(socketPath: string, tokenFile: string): Promise
   const mcp = new Server({ name: 'bridge', version: '0.1.0' }, { capabilities: CHANNEL_CAPABILITIES, instructions: CHANNEL_INSTRUCTIONS });
 
   const onPush = async (d: Delivery) => {
-    const checked = checkDelivery(d);
-    if (!checked) throw new Error('delivery failed the channel check');
-    await mcp.notification({ method: 'notifications/claude/channel', params: checked });
+    // Reactions that ride along go first, each as its own channel event with
+    // event="reaction"; then the message. Any failed check drops the whole
+    // delivery (fail closed).
+    const events = [...(d.reactions ?? []), d].map((x) => checkDelivery(x));
+    if (events.some((e) => e === null)) throw new Error('delivery failed the channel check');
+    for (const params of events) await mcp.notification({ method: 'notifications/claude/channel', params: params! });
   };
   const clientOpts = () => ({ socketPath, tokenFile, onPush, onClose: () => void connectLoop() });
   let client = new HubClient(clientOpts());

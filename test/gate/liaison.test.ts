@@ -413,3 +413,42 @@ test('the launcher refuses a --clone outside the hub-made Claude clones', async 
   new WorkspaceManager({ reposDir: wp.reposDir, clonesDir: wp.clonesDir, gitConfigPath: wp.gitConfigPath }).addRepo('app-web', gitSource(root));
   assert.throws(() => prepareClaudeLiaison({ stateDir: r.paths.stateDir, clone: join(root, 'source') }), /hub made/);
 });
+
+test('reactions end to end through the real channel process: Claude reacts with the react tool; a reaction to Claude arrives as its own event before the message', async (t) => {
+  const root = tmp(t);
+  const r = await bootHub(t, root);
+  const { mcp, notes } = await channelClient(t, r);
+  const tools = await mcp.listTools();
+  assert.ok(tools.tools.some((x) => x.name === 'react'));
+  const user = new HubClient({ socketPath: r.paths.socket, tokenFile: r.paths.tokens['codex-user']! });
+  await user.connect();
+  t.after(() => user.close());
+  await until(() => r.hub.store.auditEntries({ limit: 50 }).some((a) => a.action === 'hello' && a.actor === 'claude-liaison'));
+
+  const sent = (await user.call('send_message', { to: 'claude', kind: 'ask', body: 'far out?' })) as { message_id: string; thread_id: string };
+  await until(() => r.hub.store.getMessage(sent.message_id)!.status === 'delivered');
+  const reacted = await mcp.callTool({ name: 'react', arguments: { message_id: sent.message_id, reaction: '😎' } });
+  assert.ok(!reacted.isError, JSON.stringify(reacted.content));
+  const reply = await mcp.callTool({
+    name: 'send_message',
+    arguments: { to: 'codex', thread_id: sent.thread_id, kind: 'reply', in_reply_to: sent.message_id, body: 'Far out indeed.' },
+  });
+  assert.ok(!reply.isError);
+  const inbox = (await user.call('check_inbox', { wait_seconds: 0 })) as { reactions: { text: string }[]; messages: { message_id: string }[] };
+  assert.match(inbox.reactions[0]!.text, /provenance="claude-adapter".* reaction="smiling_face_with_sunglasses" \/>$/);
+
+  // The outside client reacts to the reply and asks again.
+  const notesBefore = notes.length;
+  await user.call('react', { message_id: inbox.messages[0]!.message_id, reaction: '✌️' });
+  await new Promise((res) => setTimeout(res, 200));
+  assert.equal(notes.length, notesBefore, 'a reaction alone sends no channel event');
+  const next = (await user.call('send_message', { to: 'claude', thread_id: sent.thread_id, kind: 'ask', body: 'one more?' })) as { message_id: string };
+  await until(() => notes.length >= notesBefore + 2);
+  const [rx, msg] = notes.slice(notesBefore) as { params: { content: string; meta: Record<string, string> } }[];
+  assert.equal(rx!.params.meta.event, 'reaction');
+  assert.equal(rx!.params.meta.reaction, 'victory_hand');
+  assert.equal(rx!.params.meta.provenance, 'codex-user');
+  for (const k of Object.keys(rx!.params.meta)) assert.ok((META_KEYS as readonly string[]).includes(k), k);
+  assert.equal(msg!.params.meta.event, 'message');
+  assert.equal(msg!.params.meta.message_id, next.message_id);
+});

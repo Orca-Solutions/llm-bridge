@@ -121,6 +121,12 @@
         ' · ' + m.id));
       li.append(el('div', 'body', m.body));
       for (const r of m.refs) li.append(el('div', 'meta', 'ref: ' + Object.entries(r).map(([k, v]) => k + '=' + v).join(' ')));
+      // Agent reactions on this message. A codex-user reaction is the Codex
+      // side's outside client, an agent, never the maintainer.
+      for (const r of (d.reactions || []).filter((x) => x.message_id === m.id)) {
+        const what = r.reaction === 'none' ? 'reaction cleared' : (r.emoji || '') + ' ' + r.reaction;
+        li.append(el('div', 'meta reaction', what + ' · from ' + r.from_name + ' (' + r.principal + ', agent) · ' + (r.delivered_at ? 'delivered' : 'pending')));
+      }
       tl.append(li);
     }
     const au = $('audit');

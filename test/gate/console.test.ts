@@ -186,3 +186,12 @@ test('the console binds to loopback only', async (t) => {
   const addr = (s.consoleServer as unknown as { server: { address(): { address: string } } }).server.address();
   assert.equal(addr.address, '127.0.0.1');
 });
+
+test('the human has no reactions: no react endpoint, and the console shows agent reactions as agents', async (t) => {
+  const s = await setup(t);
+  for (const path of ['/api/react', '/api/reactions', '/api/messages/msg_01JA8Z3Q8M4V6F2K9T0R1B7C5D/react', '/api/threads/thr_01JA8Z2X0N3Y5H7P8Q9R4S6T2V/react']) {
+    assert.equal((await s.post(path, { message_id: 'msg_01JA8Z3Q8M4V6F2K9T0R1B7C5D', reaction: '👍' })).status, 404, path);
+  }
+  const ui = readFileSync(new URL('../../src/console/static/app.js', import.meta.url), 'utf8');
+  assert.match(ui, /agent\) · /, 'reactions are labelled as an agent\'s');
+});

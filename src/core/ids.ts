@@ -51,9 +51,11 @@ export const ID_PATTERNS = {
   thread: /^thr_[0-9A-HJKMNP-TV-Z]{26}$/,
   approval: /^apr_[0-9A-HJKMNP-TV-Z]{26}$/,
   question: /^qst_[0-9A-HJKMNP-TV-Z]{26}$/,
+  reaction: /^rx_[0-9A-HJKMNP-TV-Z]{26}$/,
 } as const;
 
 export const newMessageId = (): string => `msg_${ulid()}`;
 export const newThreadId = (): string => `thr_${ulid()}`;
 export const newApprovalId = (): string => `apr_${ulid()}`;
 export const newQuestionId = (): string => `qst_${ulid()}`;
+export const newReactionId = (): string => `rx_${ulid()}`;

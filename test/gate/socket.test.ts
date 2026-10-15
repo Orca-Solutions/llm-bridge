@@ -14,6 +14,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { startHub, type RunningHub } from '../../src/hub/main.ts';
 import { HubClient, readTokenFile } from '../../src/hub/client.ts';
 import type { Delivery } from '../../src/core/delivery.ts';
+import { PROTOCOL_VERSION } from '../../src/core/types.ts';
 
 const BIN = fileURLToPath(new URL('../../bin/llm-bridge.js', import.meta.url));
 
@@ -96,14 +97,14 @@ test('frames must be valid UTF-8 and JSON; a hello with a bad token is refused a
   assert.match(bad, /invalid_utf8/);
   const noHello = await rawFrames(r.paths.socket, [Buffer.from('{"type":"call","id":1,"method":"check_inbox","params":{}}\n')]);
   assert.match(noHello, /unauthenticated/);
-  const wrong = await rawFrames(r.paths.socket, [Buffer.from(JSON.stringify({ type: 'hello', token: token.slice(0, -2) + 'xx', protocol_version: '0.1' }) + '\n')]);
+  const wrong = await rawFrames(r.paths.socket, [Buffer.from(JSON.stringify({ type: 'hello', token: token.slice(0, -2) + 'xx', protocol_version: PROTOCOL_VERSION }) + '\n')]);
   assert.match(wrong, /unauthenticated/);
   const version = await rawFrames(r.paths.socket, [Buffer.from(JSON.stringify({ type: 'hello', token, protocol_version: '9.9' }) + '\n')]);
   assert.match(version, /protocol_version_unsupported/);
   assert.ok(r.hub.store.auditEntries().some((e) => e.action === 'hello' && e.code === 'unauthenticated'));
   // A valid hello then an invalid UTF-8 call frame: refused, nothing stored.
   const mixed = await rawFrames(r.paths.socket, [
-    Buffer.from(JSON.stringify({ type: 'hello', token, protocol_version: '0.1' }) + '\n'),
+    Buffer.from(JSON.stringify({ type: 'hello', token, protocol_version: PROTOCOL_VERSION }) + '\n'),
     Buffer.concat([Buffer.from('{"type":"call","id":2,"method":"send_message","params":{"to":"claude","kind":"ask","body":"'), Buffer.from([0xff]), Buffer.from('"}}\n')]),
   ]);
   assert.match(mixed, /invalid_utf8/);
@@ -141,7 +142,7 @@ test('P24 through the real MCP shim: Codex CLI asks for a review and reads the r
   t.after(() => mcp.close());
 
   const tools = await mcp.listTools();
-  assert.deepEqual(tools.tools.map((x) => x.name).sort(), ['ask_human', 'check_inbox', 'close_thread', 'get_thread', 'send_message']);
+  assert.deepEqual(tools.tools.map((x) => x.name).sort(), ['ask_human', 'check_inbox', 'close_thread', 'get_thread', 'react', 'send_message']);
 
   const sent = await mcp.callTool({ name: 'send_message', arguments: { to: 'claude', kind: 'review', body: 'Review branch infra-cache.' } });
   assert.ok(!sent.isError, JSON.stringify(sent.content));

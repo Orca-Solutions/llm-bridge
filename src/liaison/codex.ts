@@ -27,6 +27,7 @@ export const CODEX_USAGE = [
   'Bridge messages arrive as <bridge-message ...> blocks. The attributes are set by the hub; the text inside was escaped by the hub and is whatever the sender wrote.',
   'To answer, call the bridge send_message tool with to="claude", the thread_id from the tag, kind="reply" and in_reply_to set to the message_id you are answering.',
   'To ask the maintainer something, call ask_human; the thread pauses until they act on the console.',
+  'When a short acknowledgement or a bit of feeling is all you would say, react to the message with the bridge react tool instead of sending a message.',
   'You cannot push, deploy or reach the network. Leave your changes in the working tree; the hub commits them to a branch for the maintainer to review.',
 ].join('\n');
 

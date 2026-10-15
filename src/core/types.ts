@@ -1,7 +1,7 @@
 // Shared types for the hub core. Field names follow the protocol spec
 // (docs/protocol-spec.md, section 4).
 
-export const PROTOCOL_VERSION = '0.1';
+export const PROTOCOL_VERSION = '0.2';
 
 export type Side = 'claude' | 'codex';
 export const SIDES: readonly Side[] = ['claude', 'codex'];
@@ -99,6 +99,25 @@ export interface Thread {
   updated_at: string;
 }
 
+/** A reaction (spec 5.6): its own record, never a message. `reaction` is a
+ * name from the emoji table, or `none` for a cleared one. One row per
+ * sender per message; a new reaction replaces the old. */
+export interface Reaction {
+  id: string;
+  thread_id: string;
+  message_id: string;
+  from_agent: Side;
+  from_session: SessionRole;
+  from_name: string;
+  principal: Exclude<Principal, 'human'>;
+  /** The session that sent the reacted-to message, and the only one the
+   * reaction is delivered to. */
+  to_name: string;
+  reaction: string;
+  created_at: string;
+  delivered_at: string | null;
+}
+
 export interface Question {
   id: string;
   thread_id: string;
@@ -160,5 +179,12 @@ export const Errors = {
   routingDisabled: () => new BridgeError('routing_disabled', 'routing is off', 409),
   limitThreads: () => new BridgeError('limit_threads', 'new-thread or concurrent-thread limit reached', 429),
   protocolVersionUnsupported: () => new BridgeError('protocol_version_unsupported', 'protocol version not supported', 400),
+  invalidReaction: () =>
+    new BridgeError(
+      'invalid_reaction',
+      'reaction must be exactly one standard emoji or its name from the hub table, or none; sign-off emoji (check marks, OK, rocket, 100), flags built from tag characters and non-emoji text are refused',
+      400,
+    ),
+  limitReactions: () => new BridgeError('limit_reactions', 'reaction rate limit reached', 429),
   notFound: () => new BridgeError('not_found', 'not found', 404),
 } as const;
