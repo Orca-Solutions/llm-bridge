@@ -3,3 +3,6 @@ node_modules/
 *.db-wal
 *.db-shm
 *.token
+
+# Personal agent overrides stay local; shared entry points remain tracked.
+CLAUDE.local.md
